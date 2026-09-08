@@ -99,7 +99,7 @@ export const GetUserSuggestedProductsInputSchema = z.object({
   date: DateStringSchema.optional(),
   daytime: DaytimeSchema.default("breakfast").describe("Meal slot"),
   limit: z.number().int().positive().optional().describe("Optional maximum number of suggestions returned by the MCP server"),
-});
+}).strict();
 
 export const AddConsumedItemInputSchema = z.object({
   product_id: ProductIdSchema.describe("Product ID from search_products"),

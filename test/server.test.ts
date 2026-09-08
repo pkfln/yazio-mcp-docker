@@ -76,8 +76,20 @@ test("applies suggested-product limits locally without pretending query is suppo
     expect(JSON.parse(resultText(limited).replace("Product suggestions:\n\n", ""))).toHaveLength(2);
 
     const tools = await client.listTools();
+    const addTool = tools.tools.find(({ name }) => name === "add_user_consumed_item");
+    const addSchema = addTool?.inputSchema as { properties?: { date?: { pattern?: string } } } | undefined;
+    expect(addSchema?.properties?.date?.pattern).toBe("^\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}$");
+    const removeTool = tools.tools.find(({ name }) => name === "remove_user_consumed_item");
+    const removeSchema = removeTool?.inputSchema as { required?: string[] } | undefined;
+    expect(removeSchema?.required).toEqual(["itemId", "bucket"]);
     const suggestionTool = tools.tools.find(({ name }) => name === "get_user_suggested_products");
     expect(JSON.stringify(suggestionTool?.inputSchema)).not.toContain("query");
+
+    const legacyQuery = await client.callTool({
+      name: "get_user_suggested_products",
+      arguments: { date: "2026-09-08", daytime: "breakfast", query: "banana" },
+    });
+    expect(legacyQuery.isError).toBe(true);
   } finally {
     await client.close();
     await server.close();

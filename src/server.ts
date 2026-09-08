@@ -164,7 +164,7 @@ export class YazioMcpServer {
     }, async () => this.run(async () => dataResult("User settings", await this.api.getSettings())) as Promise<CallToolResult>);
 
     this.server.registerTool("get_user_suggested_products", {
-      description: "Get YAZIO's recommendation/history-style products for a meal slot and date. This is not text search; an optional limit is applied locally after the API response.",
+      description: "Get YAZIO's recommendation/history-style products for a meal slot and date. This is not text search; do not pass a query. Use search_products for named foods. An optional limit is applied locally after the API response.",
       inputSchema: GetUserSuggestedProductsInputSchema,
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: true },
     }, async (args: GetUserSuggestedProductsInput) => this.run(async () => {
