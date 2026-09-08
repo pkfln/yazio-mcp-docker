@@ -76,15 +76,17 @@ export interface YazioUserInfo {
   reset_date?: string | null;
   activity_degree?: string;
   stripe_customer_id?: string | null;
+  language?: string;
+  tags?: unknown[];
 }
 
 export interface YazioWeightEntry {
   value: number | null;
   date: string;
   id: string;
-  external_id: string | null;
-  gateway: string | null;
-  source: string | null;
+  external_id: unknown | null;
+  gateway: unknown | null;
+  source: unknown | null;
 }
 
 export interface YazioSuggestedProduct {
@@ -95,17 +97,17 @@ export interface YazioSuggestedProduct {
 }
 
 export interface YazioDietaryPreferences {
-  restriction: string | null;
+  restriction: unknown | null;
 }
 
 export interface YazioExercise {
   date: string;
   id: string;
   name: string;
-  external_id: string | null;
-  gateway: string | null;
-  source: string | null;
-  note: string | null;
+  external_id: unknown | null;
+  gateway: unknown | null;
+  source: unknown | null;
+  note: unknown | null;
   energy: number;
   distance: number;
   duration: number;
@@ -115,6 +117,14 @@ export interface YazioExercise {
 export interface YazioExercises {
   training: YazioExercise[];
   custom_training: YazioExercise[];
+  activity?: {
+    energy: number;
+    distance: number;
+    duration: number;
+    source: unknown | null;
+    gateway: string;
+    steps: number;
+  };
 }
 
 export interface YazioGoals {
@@ -141,8 +151,8 @@ export interface YazioSettings {
 }
 
 export interface YazioWaterIntake {
-  gateway: string | null;
-  source: string | null;
+  gateway: unknown | null;
+  source: unknown | null;
   water_intake: number;
 }
 
@@ -171,7 +181,7 @@ export interface YazioDailySummary {
     goal?: string;
     sex?: string;
   };
-  active_fasting_countdown_template_key: string | null;
+  active_fasting_countdown_template_key: unknown | null;
 }
 
 export interface YazioConsumedItem {
@@ -183,6 +193,13 @@ export interface YazioConsumedItem {
   product_id: string;
   serving_quantity: number | null;
   daytime: "breakfast" | "lunch" | "dinner" | "snack";
+}
+
+export type ConsumedItemBucket = "products" | "recipe_portions" | "simple_products";
+
+export interface RemoveConsumedItemRequest {
+  itemId: string;
+  bucket: ConsumedItemBucket;
 }
 
 export interface YazioSimpleProduct {
@@ -197,8 +214,58 @@ export interface YazioSimpleProduct {
 
 export interface YazioConsumedItems {
   products: YazioConsumedItem[];
-  recipe_portions: unknown[];
+  recipe_portions: YazioConsumedRecipePortion[];
   simple_products: YazioSimpleProduct[];
+}
+
+export interface YazioConsumedRecipePortion {
+  id: string;
+  date: string;
+  daytime: "breakfast" | "lunch" | "dinner" | "snack";
+  type?: string;
+  recipe_id: string;
+  portion_count: number;
+}
+
+export interface YazioRecipeServing {
+  amount: number;
+  serving?: unknown | null;
+  producer?: string | null;
+  name?: string;
+  serving_quantity?: unknown | null;
+  base_unit?: string;
+  note?: unknown | null;
+  product_id?: string;
+}
+
+export interface YazioRecipe {
+  id: string;
+  yazio_id?: unknown;
+  locale?: string;
+  name: string;
+  portion_count: number;
+  nutrients: Record<string, number>;
+  image?: unknown;
+  servings: YazioRecipeServing[];
+  instructions: unknown[];
+  is_yazio_recipe?: boolean;
+  available_since?: unknown;
+  is_pro_recipe?: boolean;
+}
+
+export interface YazioFavoriteRecipe {
+  id?: string;
+  recipe_id: string;
+  portion_count: number;
+  yazio_id?: string | null;
+}
+
+export interface YazioFavoriteProduct {
+  id?: string;
+  product_id: string;
+  amount: number;
+  serving_quantity: number;
+  serving: string;
 }
 
 export interface AddConsumedItemRequest {

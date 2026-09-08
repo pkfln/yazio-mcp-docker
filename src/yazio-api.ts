@@ -6,13 +6,17 @@ import type {
   AddSimpleProductRequest,
   AddWaterIntakeRequest,
   AddWaterIntakesRequest,
+  RemoveConsumedItemRequest,
   YazioConsumedItems,
   YazioDailySummary,
   YazioDietaryPreferences,
+  YazioFavoriteProduct,
+  YazioFavoriteRecipe,
   YazioExercises,
   YazioGoals,
   YazioProduct,
   YazioProductSearchResult,
+  YazioRecipe,
   YazioSettings,
   YazioSuggestedProduct,
   YazioToken,
@@ -21,12 +25,13 @@ import type {
   YazioWeightEntry,
 } from "./types";
 
-export const YAZIO_BASE_URL = "https://yzapi.yazio.com/v15";
+export const YAZIO_BASE_URL = "https://yzapi.yazio.com/v22";
+export const YAZIO_USER_AGENT = "YAZIO/26.30.1 (com.yazio.ios.YAZIO; build:2607271240; iOS 27.0.0) Ktor";
 
 const DEFAULT_TOKEN_LIFETIME_SECONDS = 172800;
 const TOKEN_REFRESH_SKEW_MS = 30000;
-export const YAZIO_CLIENT_ID = "1_4hiybetvfksgw40o0sog4s884kwc840wwso8go4k8c04goo4c";
-export const YAZIO_CLIENT_SECRET = "6rok2m65xuskgkgogw40wkkk8sw0osg84s8cggsc4woos4s8o";
+export const YAZIO_CLIENT_ID = "3_5rbw4kehpugw8ogsc8ck8oo4ogswgckcskc04gcg8kk8k48ssw";
+export const YAZIO_CLIENT_SECRET = "25gdtt1hvdi8gwowoww4oo88sgsw0oo04o0og0kkgwwks8k0k";
 
 export type FetchLike = (
   input: RequestInfo | URL,
@@ -39,6 +44,8 @@ export interface YazioApiClientOptions {
   password?: string;
   clientId?: string;
   clientSecret?: string;
+  userAgent?: string;
+  acceptLanguage?: string;
   accessToken?: string;
   refreshToken?: string;
   tokenExpiresAt?: number;
@@ -115,7 +122,7 @@ export function formatYazioDate(value?: string | Date): string {
   return dateOnly;
 }
 
-/** Format the timestamp required for regular consumed-item writes. */
+/** Format the timestamp required for diary and water writes. */
 export function formatYazioDateTime(value: string | Date): string {
   if (value instanceof Date) {
     if (Number.isNaN(value.getTime())) throw new Error("Invalid date");
@@ -171,6 +178,8 @@ export class YazioApiClient {
   private readonly password?: string;
   private readonly clientId: string;
   private readonly clientSecret: string;
+  private readonly userAgent: string;
+  private readonly acceptLanguage?: string;
   private readonly fetchFn: FetchLike;
   private readonly now: () => number;
   private token: YazioToken | null = null;
@@ -182,6 +191,8 @@ export class YazioApiClient {
     this.password = options.password ?? process.env.YAZIO_PASSWORD;
     this.clientId = options.clientId ?? process.env.YAZIO_CLIENT_ID ?? YAZIO_CLIENT_ID;
     this.clientSecret = options.clientSecret ?? process.env.YAZIO_CLIENT_SECRET ?? YAZIO_CLIENT_SECRET;
+    this.userAgent = options.userAgent ?? process.env.YAZIO_USER_AGENT ?? YAZIO_USER_AGENT;
+    this.acceptLanguage = options.acceptLanguage ?? process.env.YAZIO_ACCEPT_LANGUAGE;
     this.fetchFn = options.fetch ?? globalThis.fetch.bind(globalThis);
     this.now = options.now ?? Date.now;
 
@@ -206,23 +217,18 @@ export class YazioApiClient {
 
   private async requestToken(
     values: Record<string, string>,
-    formEncoded: boolean,
     previousRefreshToken?: string,
   ): Promise<YazioToken> {
-    const headers = new Headers({ Accept: "application/json" });
-    let body: string;
-    if (formEncoded) {
-      headers.set("Content-Type", "application/x-www-form-urlencoded");
-      body = new URLSearchParams(values).toString();
-    } else {
-      headers.set("Content-Type", "application/json");
-      body = JSON.stringify(values);
-    }
+    const headers = new Headers({
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      "User-Agent": this.userAgent,
+    });
 
     const response = await this.fetchFn(this.url("/oauth/token"), {
       method: "POST",
       headers,
-      body,
+      body: JSON.stringify(values),
     });
     const payload = await readResponseBody(response);
     if (!response.ok) {
@@ -247,7 +253,7 @@ export class YazioApiClient {
             client_secret: this.clientSecret,
             grant_type: "refresh_token",
             refresh_token: previousRefreshToken,
-          }, true, previousRefreshToken);
+          }, previousRefreshToken);
           this.token = refreshed;
           return refreshed;
         } catch (error) {
@@ -270,17 +276,7 @@ export class YazioApiClient {
         password: this.password,
         grant_type: "password",
       };
-      try {
-        this.token = await this.requestToken(values, true);
-      } catch (error) {
-        // A few historical YAZIO deployments accepted JSON despite the public
-        // Swagger contract. Keep a narrowly scoped fallback for those servers.
-        if (error instanceof YazioApiError && [400, 415, 422].includes(error.status ?? 0)) {
-          this.token = await this.requestToken(values, false);
-        } else {
-          throw error;
-        }
-      }
+      this.token = await this.requestToken(values);
       return this.token;
     })().finally(() => {
       this.authPromise = undefined;
@@ -311,6 +307,10 @@ export class YazioApiClient {
   private async request<T>(path: string, init: RequestInit = {}, retryAuth = true): Promise<T> {
     const headers = new Headers(init.headers);
     headers.set("Accept", "application/json");
+    headers.set("User-Agent", this.userAgent);
+    if (this.acceptLanguage && !headers.has("Accept-Language")) {
+      headers.set("Accept-Language", this.acceptLanguage);
+    }
     const accessToken = await this.accessToken();
     headers.set("Authorization", `Bearer ${accessToken}`);
 
@@ -383,7 +383,7 @@ export class YazioApiClient {
       recipe_portions: [],
       simple_products: [{
         id,
-        date: input.date,
+        date: formatYazioDateTime(input.date),
         daytime: input.daytime,
         type: "simple_product",
         name: input.name,
@@ -393,12 +393,19 @@ export class YazioApiClient {
     return id;
   }
 
-  async removeConsumedItems(itemIds: string[]): Promise<unknown> {
-    return this.requestJson("/user/consumed-items", "DELETE", itemIds);
+  async removeConsumedItems(items: RemoveConsumedItemRequest[]): Promise<{ removed: RemoveConsumedItemRequest[]; responses: unknown[] }> {
+    const responses: unknown[] = [];
+    for (const item of items) {
+      responses.push(await this.requestJson("/user/consumed-items", "DELETE", {
+        [item.bucket]: item.itemId,
+      }));
+    }
+    return { removed: items, responses };
   }
 
-  async removeConsumedItem(itemId: string): Promise<unknown> {
-    return this.removeConsumedItems([itemId]);
+  async removeConsumedItem(itemId: string, bucket: RemoveConsumedItemRequest["bucket"]): Promise<unknown> {
+    const result = await this.removeConsumedItems([{ itemId, bucket }]);
+    return result.responses[0];
   }
 
   async getDailySummary(date: string): Promise<YazioDailySummary> {
@@ -410,7 +417,10 @@ export class YazioApiClient {
   }
 
   async addWaterIntakes(inputs: AddWaterIntakesRequest): Promise<unknown> {
-    return this.requestJson("/user/water-intake", "POST", inputs);
+    return this.requestJson("/user/water-intake", "POST", inputs.map((input) => ({
+      date: formatYazioDateTime(input.date),
+      water_intake: input.water_intake,
+    })));
   }
 
   async addWaterIntake(input: AddWaterIntakeRequest): Promise<unknown> {
@@ -429,12 +439,35 @@ export class YazioApiClient {
       countries: options.countries.join(","),
       locales: options.locales.join(","),
     });
-    return this.request<YazioProductSearchResult[]>(`/products/search?${params.toString()}`);
+    const acceptLanguage = this.acceptLanguage ?? options.locales[0]?.replace("_", "-");
+    return this.request<YazioProductSearchResult[]>(`/products/search?${params.toString()}`, {
+      headers: acceptLanguage ? { "Accept-Language": acceptLanguage } : undefined,
+    });
   }
 
   async getProduct(id: string): Promise<YazioProduct | null> {
     const product = await this.request<YazioProduct | null>(`/products/${encodeURIComponent(id)}`);
     return product ? { ...product, id: product.id ?? id } : null;
+  }
+
+  async getUserRecipes(): Promise<string[]> {
+    return this.request<string[]>("/user/recipes");
+  }
+
+  async getRecipe(id: string): Promise<YazioRecipe> {
+    return this.request<YazioRecipe>(`/recipes/${encodeURIComponent(id)}`);
+  }
+
+  async getUserProducts(): Promise<string[]> {
+    return this.request<string[]>("/user/products");
+  }
+
+  async getFavoriteRecipes(): Promise<YazioFavoriteRecipe[]> {
+    return this.request<YazioFavoriteRecipe[]>("/user/favorites/recipe");
+  }
+
+  async getFavoriteProducts(): Promise<YazioFavoriteProduct[]> {
+    return this.request<YazioFavoriteProduct[]>("/user/favorites/product");
   }
 
   async getExercises(date?: string): Promise<YazioExercises> {

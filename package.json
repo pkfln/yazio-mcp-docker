@@ -1,7 +1,7 @@
 {
   "name": "yazio-mcp-server",
   "version": "0.2.0",
-  "description": "A Bun-native MCP server for the YAZIO public API.",
+  "description": "A Bun-native MCP server for the community-documented YAZIO v22 API.",
   "type": "module",
   "bin": {
     "yazio-mcp": "dist/index.js"

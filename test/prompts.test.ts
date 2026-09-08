@@ -30,6 +30,11 @@ test("exposes the reference MCP prompts and quick-add guidance", async () => {
     expect(tools.tools.map(({ name }) => name)).toContain("add_user_consumed_items");
     expect(tools.tools.map(({ name }) => name)).toContain("remove_user_consumed_items");
     expect(tools.tools.map(({ name }) => name)).toContain("add_user_water_intakes");
+    expect(tools.tools.map(({ name }) => name)).toContain("get_user_recipes");
+    expect(tools.tools.map(({ name }) => name)).toContain("get_recipe");
+    expect(tools.tools.map(({ name }) => name)).toContain("get_user_products");
+    expect(tools.tools.map(({ name }) => name)).toContain("get_user_favorite_recipes");
+    expect(tools.tools.map(({ name }) => name)).toContain("get_user_favorite_products");
 
     const addFood = await client.getPrompt({ name: "add_food_item" });
     const quickAdd = await client.getPrompt({ name: "quick_add_food" });
@@ -51,6 +56,8 @@ test("exposes the reference MCP prompts and quick-add guidance", async () => {
     expect(text(quickAdd)).toContain("estimated carb");
     expect(text(removeFood)).toContain("get_user_consumed_items");
     expect(text(removeFood)).toContain("itemId");
+    expect(text(removeFood)).toContain("bucket");
+    expect(text(removeFood)).toContain("Never send a bare ID array");
     expect(text(removeFood)).toContain("remove_user_consumed_items");
     expect(text(addWater)).toContain("cumulative water_intake");
     expect(text(addWater)).toContain("YYYY-MM-DD HH:mm:ss");

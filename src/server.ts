@@ -9,11 +9,16 @@ import {
   AddWaterIntakesInputSchema,
   GetDailySummaryInputSchema,
   GetDietaryPreferencesInputSchema,
+  GetFavoriteProductsInputSchema,
+  GetFavoriteRecipesInputSchema,
   GetFoodEntriesInputSchema,
   GetProductInputSchema,
+  GetRecipeInputSchema,
   GetUserExercisesInputSchema,
   GetUserGoalsInputSchema,
   GetUserInfoInputSchema,
+  GetUserProductsInputSchema,
+  GetUserRecipesInputSchema,
   GetUserSettingsInputSchema,
   GetUserSuggestedProductsInputSchema,
   GetUserWeightInputSchema,
@@ -27,10 +32,15 @@ import {
   type AddWaterIntakeInput,
   type AddWaterIntakesInput,
   type GetDailySummaryInput,
+  type GetFavoriteProductsInput,
+  type GetFavoriteRecipesInput,
   type GetFoodEntriesInput,
   type GetProductInput,
+  type GetRecipeInput,
   type GetUserExercisesInput,
   type GetUserGoalsInput,
+  type GetUserProductsInput,
+  type GetUserRecipesInput,
   type GetUserSuggestedProductsInput,
   type GetUserWeightInput,
   type GetWaterIntakeInput,
@@ -81,10 +91,11 @@ export class YazioMcpServer {
         "For destructive deletions, ensure the target is explicit and confirmed; do not guess when several entries match.",
         "After every mutation, read the affected date again and verify the result. If an unambiguous discrepancy was caused by the mutation, correct it using the captured original or intended values; otherwise report the discrepancy instead of guessing.",
         "When reporting results, resolve product and consumed-item IDs into names and relevant details whenever the API provides enough information.",
+        "User-created recipe and product collections return opaque IDs. Resolve recipe IDs with get_recipe and product IDs with get_product before reporting names, nutrients, or serving details.",
         "Prefer an existing YAZIO product: search the product database before using a quick-add simple product. Use a simple product only when no suitable match exists or the user explicitly requests an estimate.",
         "Regular product diary writes require a full YYYY-MM-DD HH:mm:ss timestamp. When copying an entry, preserve its source time-of-day and change only the target calendar date; never use a date-only value for a write.",
         "For multiple regular products, use add_user_consumed_items with one complete item per product and verify every generated consumed-item ID after the write.",
-        "Before bulk deletion, read the affected diary date, retain a backup of every selected entry, confirm the complete target set, and then use remove_user_consumed_items.",
+        "A v22 diary deletion is bucket-specific: preserve whether each ID belongs to products, recipe_portions, or simple_products. Before deletion, read the affected diary date, retain a backup of every selected entry, confirm the complete target set, and then use remove_user_consumed_item or remove_user_consumed_items with the matching bucket.",
         "For multiple water entries, calculate each cumulative water_intake value in chronological order and use add_user_water_intakes only after verifying those totals.",
       ].join(" "),
     });
@@ -171,10 +182,40 @@ export class YazioMcpServer {
     }) as Promise<CallToolResult>);
 
     this.server.registerTool("get_product", {
-      description: "Get full nutrition and serving details for a product ID.",
+      description: "Get full nutrition and serving details for a YAZIO database or user-created product ID.",
       inputSchema: GetProductInputSchema,
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: true },
     }, async (args: GetProductInput) => this.run(async () => dataResult(`Product details for ID \"${args.id}\"`, await this.api.getProduct(args.id))) as Promise<CallToolResult>);
+
+    this.server.registerTool("get_user_recipes", {
+      description: "List IDs of recipes saved in the user's YAZIO account. Resolve each ID with get_recipe before presenting recipe details.",
+      inputSchema: GetUserRecipesInputSchema,
+      annotations: { readOnlyHint: true, idempotentHint: true },
+    }, async (_args: GetUserRecipesInput) => this.run(async () => dataResult("User recipe IDs", await this.api.getUserRecipes())) as Promise<CallToolResult>);
+
+    this.server.registerTool("get_recipe", {
+      description: "Get full details for a YAZIO recipe, including portions, nutrients, ingredients, and instructions.",
+      inputSchema: GetRecipeInputSchema,
+      annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: true },
+    }, async (args: GetRecipeInput) => this.run(async () => dataResult(`Recipe details for ID \"${args.id}\"`, await this.api.getRecipe(args.id))) as Promise<CallToolResult>);
+
+    this.server.registerTool("get_user_products", {
+      description: "List IDs of custom products created in the user's YAZIO account. Resolve each ID with get_product before presenting details.",
+      inputSchema: GetUserProductsInputSchema,
+      annotations: { readOnlyHint: true, idempotentHint: true },
+    }, async (_args: GetUserProductsInput) => this.run(async () => dataResult("User product IDs", await this.api.getUserProducts())) as Promise<CallToolResult>);
+
+    this.server.registerTool("get_user_favorite_recipes", {
+      description: "List recipes saved as favorites by the user, including their recipe IDs and portion counts.",
+      inputSchema: GetFavoriteRecipesInputSchema,
+      annotations: { readOnlyHint: true, idempotentHint: true },
+    }, async (_args: GetFavoriteRecipesInput) => this.run(async () => dataResult("Favorite recipes", await this.api.getFavoriteRecipes())) as Promise<CallToolResult>);
+
+    this.server.registerTool("get_user_favorite_products", {
+      description: "List products saved as favorites by the user, including product IDs and serving quantities.",
+      inputSchema: GetFavoriteProductsInputSchema,
+      annotations: { readOnlyHint: true, idempotentHint: true },
+    }, async (_args: GetFavoriteProductsInput) => this.run(async () => dataResult("Favorite products", await this.api.getFavoriteProducts())) as Promise<CallToolResult>);
 
     this.server.registerTool("add_user_consumed_item", {
       description: "Add one food product to the diary with a full YYYY-MM-DD HH:mm:ss timestamp. Search for the product first and provide amount in g or ml.",
@@ -221,23 +262,23 @@ export class YazioMcpServer {
     }) as Promise<CallToolResult>);
 
     this.server.registerTool("remove_user_consumed_item", {
-      description: "Remove a regular or quick-add diary entry by its consumed-item ID. Retrieve diary entries first to identify the ID.",
+      description: "Remove one diary entry by its consumed-item ID and v22 collection (products, recipe_portions, or simple_products). Retrieve diary entries first to identify both.",
       inputSchema: RemoveConsumedItemInputSchema,
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
     }, async (args: RemoveConsumedItemInput) => this.run(async () => {
-      const result = await this.api.removeConsumedItem(args.itemId);
-      return dataResult(`Successfully removed consumed item with ID: ${args.itemId}`, result);
+      const result = await this.api.removeConsumedItem(args.itemId, args.bucket);
+      return dataResult(`Successfully removed ${args.bucket} diary item with ID: ${args.itemId}`, result);
     }) as Promise<CallToolResult>);
 
     this.server.registerTool("remove_user_consumed_items", {
-      description: "Remove multiple regular or quick-add diary entries by their consumed-item IDs. Retrieve and confirm every target first.",
+      description: "Remove multiple diary entries by their consumed-item IDs and v22 collections. Retrieve and confirm every target first; the server sends one documented delete per entry.",
       inputSchema: RemoveConsumedItemsInputSchema,
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
     }, async (args: RemoveConsumedItemsInput) => this.run(async () => {
-      const response = await this.api.removeConsumedItems(args.itemIds);
-      return dataResult(`Successfully removed ${args.itemIds.length} consumed items`, {
-        consumed_item_ids: args.itemIds,
-        api_response: response,
+      const result = await this.api.removeConsumedItems(args.items);
+      return dataResult(`Successfully removed ${result.removed.length} consumed items`, {
+        consumed_items: result.removed,
+        api_responses: result.responses,
       });
     }) as Promise<CallToolResult>);
 
@@ -288,7 +329,7 @@ export class YazioMcpServer {
       "1. Estimate a concise name, energy in kilocalories, and—when possible—carbohydrates, protein, and fat in grams. State the portion and preparation assumptions clearly.",
       "2. If the estimate, portion, date, time, or meal slot is ambiguous, ask a follow-up question. Do not invent a date or timestamp. Tell the user the estimates before writing and obtain confirmation because this is a mutating action.",
       "3. Call add_user_simple_product with name, date in YYYY-MM-DD HH:mm:ss format, daytime (breakfast, lunch, dinner, or snack), energy, and any estimated carb, protein, and fat values.",
-      "4. Verify the write by calling get_user_consumed_items for the calendar date. Locate the new simple_products entry by its generated ID or name and confirm its timestamp, meal slot, and nutrients. If the result is wrong, explain the discrepancy; if correction requires deletion, confirm that removal before using remove_user_consumed_item, then recreate it with corrected values and verify again.",
+      "4. Verify the write by calling get_user_consumed_items for the calendar date. Locate the new simple_products entry by its generated ID or name and confirm its timestamp, meal slot, and nutrients. If the result is wrong, explain the discrepancy; if correction requires deletion, confirm that removal before using remove_user_consumed_item with bucket simple_products, then recreate it with corrected values and verify again.",
       "For multiple dates, complete and verify one date at a time. Keep the generated ID so the quick-add entry can be removed if the user corrects the estimate.",
     ].join("\n\n") } }] }));
 
@@ -299,10 +340,11 @@ export class YazioMcpServer {
       "To remove a food item from the user's consumption log, follow this workflow:",
       "1. Retrieve the diary: call get_user_consumed_items with the relevant date in YYYY-MM-DD format.",
       "2. Identify the exact entry using its id, product_id, name, date, daytime, amount, serving, and other product details. The consumed-item id is the id field, not product_id.",
+      "   Keep the collection containing the ID: regular entries are in products, recipe portions are in recipe_portions, and quick-add entries are in simple_products.",
       "3. If multiple entries match, ask the user to clarify which one should be removed. Do not guess.",
-      "4. Keep the original product_id, date, daytime, amount, serving, and serving_quantity in context so the entry can be recreated if verification finds a mistake.",
+      "4. Keep the original product_id or recipe_id, date, daytime, amount or portion_count, serving, and serving_quantity in context so the entry can be recreated if verification finds a mistake.",
       "5. Tell the user which entry will be deleted and confirm the destructive change before continuing.",
-      "6. Call remove_user_consumed_item with itemId set to the selected consumed-item id. If several exact entries are confirmed, use remove_user_consumed_items with all selected consumed-item IDs in one request.",
+      "6. Call remove_user_consumed_item with itemId and its bucket. If several exact entries are confirmed, use remove_user_consumed_items with items containing one itemId/bucket object per selected entry. Never send a bare ID array.",
       "7. Verify the deletion by calling get_user_consumed_items for the same date and resolving the remaining entries into names. If the wrong item was removed, recreate the original entry immediately from the captured fields and verify again.",
     ].join("\n\n") } }] }));
 

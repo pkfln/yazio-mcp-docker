@@ -15,6 +15,10 @@ function jsonResponse(value: unknown, status = 200): Response {
   });
 }
 
+function tokenRequestBody(init?: RequestInit): Record<string, string> {
+  return JSON.parse(String(init?.body)) as Record<string, string>;
+}
+
 test("requires a timestamp for regular diary writes", () => {
   const input = {
     product_id: "product-1",
@@ -37,22 +41,42 @@ test("validates non-empty bulk diary mutation inputs", () => {
 
   expect(AddConsumedItemsInputSchema.safeParse({ items: [item] }).success).toBe(true);
   expect(AddConsumedItemsInputSchema.safeParse({ items: [] }).success).toBe(false);
-  expect(RemoveConsumedItemsInputSchema.safeParse({ itemIds: ["item-1", "item-2"] }).success).toBe(true);
-  expect(RemoveConsumedItemsInputSchema.safeParse({ itemIds: ["item-1", "item-1"] }).success).toBe(false);
+  expect(RemoveConsumedItemsInputSchema.safeParse({
+    items: [
+      { itemId: "item-1", bucket: "products" },
+      { itemId: "item-2", bucket: "simple_products" },
+    ],
+  }).success).toBe(true);
+  expect(RemoveConsumedItemsInputSchema.safeParse({
+    items: [
+      { itemId: "item-1", bucket: "products" },
+      { itemId: "item-1", bucket: "products" },
+    ],
+  }).success).toBe(false);
+  expect(RemoveConsumedItemsInputSchema.safeParse({
+    items: [{ itemId: "item-1", bucket: "products" }],
+  }).success).toBe(true);
   expect(AddWaterIntakesInputSchema.safeParse({
     entries: [{ date: "2026-01-02 08:00:00", water_intake: 500 }],
   }).success).toBe(true);
   expect(AddWaterIntakesInputSchema.safeParse({ entries: [] }).success).toBe(false);
 });
 
-test("authenticates with the Swagger-required form body and reuses the token", async () => {
+test("authenticates with the v22 JSON body and reuses the token", async () => {
   const calls: Array<{ url: string; init?: RequestInit }> = [];
   const fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const url = String(input);
     calls.push({ url, init });
     if (url.endsWith("/oauth/token")) {
-      expect(init?.headers instanceof Headers ? init.headers.get("content-type") : undefined).toBe("application/x-www-form-urlencoded");
-      expect(String(init?.body)).toMatch(/grant_type=password/);
+      expect(init?.headers instanceof Headers ? init.headers.get("content-type") : undefined).toBe("application/json");
+      expect(init?.headers instanceof Headers ? init.headers.get("user-agent") : undefined).toContain("YAZIO/");
+      expect(JSON.parse(String(init?.body))).toMatchObject({
+        grant_type: "password",
+        username: "user@example.com",
+        password: "secret",
+      });
+      expect(JSON.parse(String(init?.body)).client_id).toBeString();
+      expect(JSON.parse(String(init?.body)).client_secret).toBeString();
       return jsonResponse({ access_token: "access-1", refresh_token: "refresh-1", token_type: "bearer", expires_in: 3600 });
     }
     expect(init?.headers instanceof Headers ? init.headers.get("authorization") : undefined).toBe("Bearer access-1");
@@ -64,10 +88,11 @@ test("authenticates with the Swagger-required form body and reuses the token", a
   await api.getUser();
 
   expect(calls.filter(({ url }) => url.endsWith("/oauth/token")).length).toBe(1);
+  expect(calls.find(({ url }) => url.endsWith("/oauth/token"))?.url).toContain("/v22/oauth/token");
   expect(calls.filter(({ url }) => url.endsWith("/user")).length).toBe(2);
 });
 
-test("uses exact public API paths and payload shapes for mutations", async () => {
+test("uses exact v22 API paths and payload shapes for mutations", async () => {
   const calls: Array<{ url: string; init?: RequestInit }> = [];
   const fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const url = String(input);
@@ -87,7 +112,7 @@ test("uses exact public API paths and payload shapes for mutations", async () =>
     serving: null,
     serving_quantity: null,
   });
-  await api.removeConsumedItem("item-1");
+  await api.removeConsumedItem("item-1", "products");
   await api.addWaterIntake({ date: "2026-01-02 12:00:00", water_intake: 750 });
 
   const mutations = calls.filter(({ init }) => init?.method && init.method !== "POST" || init?.method === "POST").slice(1);
@@ -101,12 +126,12 @@ test("uses exact public API paths and payload shapes for mutations", async () =>
   expect(typeof addBody.products[0]?.id).toBe("string");
 
   const remove = calls.find(({ init, url }) => url.endsWith("/user/consumed-items") && initMethod(init) === "DELETE");
-  expect(JSON.parse(String(remove?.init?.body))).toEqual(["item-1"]);
+  expect(JSON.parse(String(remove?.init?.body))).toEqual({ products: "item-1" });
   const water = calls.find(({ init, url }) => url.endsWith("/user/water-intake") && initMethod(init) === "POST");
   expect(JSON.parse(String(water?.init?.body))).toEqual([{ date: "2026-01-02 12:00:00", water_intake: 750 }]);
 });
 
-test("uses the documented array payloads for bulk diary mutations", async () => {
+test("uses the documented v22 payloads for bulk diary mutations", async () => {
   const calls: Array<{ url: string; init?: RequestInit }> = [];
   const fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const url = String(input);
@@ -136,7 +161,10 @@ test("uses the documented array payloads for bulk diary mutations", async () => 
       serving_quantity: null,
     },
   ]);
-  await api.removeConsumedItems(["item-1", "item-2"]);
+  const removed = await api.removeConsumedItems([
+    { itemId: "item-1", bucket: "products" },
+    { itemId: "item-2", bucket: "simple_products" },
+  ]);
   await api.addWaterIntakes([
     { date: "2026-01-02 08:00:00", water_intake: 500 },
     { date: "2026-01-02 12:00:00", water_intake: 750 },
@@ -159,8 +187,16 @@ test("uses the documented array payloads for bulk diary mutations", async () => 
     "2026-01-02 19:30:00",
   ]);
 
-  const remove = calls.find(({ url, init }) => url.endsWith("/user/consumed-items") && initMethod(init) === "DELETE");
-  expect(JSON.parse(String(remove?.init?.body))).toEqual(["item-1", "item-2"]);
+  const removes = calls.filter(({ url, init }) => url.endsWith("/user/consumed-items") && initMethod(init) === "DELETE");
+  expect(removes).toHaveLength(2);
+  expect(removes.map(({ init }) => JSON.parse(String(init?.body)))).toEqual([
+    { products: "item-1" },
+    { simple_products: "item-2" },
+  ]);
+  expect(removed.removed).toEqual([
+    { itemId: "item-1", bucket: "products" },
+    { itemId: "item-2", bucket: "simple_products" },
+  ]);
   const water = calls.find(({ url, init }) => url.endsWith("/user/water-intake") && initMethod(init) === "POST");
   expect(JSON.parse(String(water?.init?.body))).toEqual([
     { date: "2026-01-02 08:00:00", water_intake: 500 },
@@ -222,7 +258,7 @@ test("encodes search filters and refreshes once after a 401", async () => {
     if (url.endsWith("/oauth/token")) {
       const body = String(init?.body);
       tokenBodies.push(body);
-      if (body.includes("grant_type=refresh_token")) {
+      if (tokenRequestBody(init).grant_type === "refresh_token") {
         return jsonResponse({ access_token: "access-2", refresh_token: "refresh-2", token_type: "bearer", expires_in: 3600 });
       }
       return jsonResponse({ access_token: "access-1", refresh_token: "refresh-1", token_type: "bearer", expires_in: 3600 });
@@ -244,8 +280,8 @@ test("encodes search filters and refreshes once after a 401", async () => {
     "access-2",
   ]);
   expect(tokenBodies.length).toBe(2);
-  expect(tokenBodies[0] ?? "").toMatch(/grant_type=password/);
-  expect(tokenBodies[1] ?? "").toMatch(/grant_type=refresh_token/);
+  expect(tokenRequestBody({ body: tokenBodies[0] }).grant_type).toBe("password");
+  expect(tokenRequestBody({ body: tokenBodies[1] }).grant_type).toBe("refresh_token");
 });
 
 test("replays a mutation with the refreshed token after a 401", async () => {
@@ -257,7 +293,7 @@ test("replays a mutation with the refreshed token after a 401", async () => {
     if (url.endsWith("/oauth/token")) {
       const body = String(init?.body);
       tokenBodies.push(body);
-      if (body.includes("grant_type=refresh_token")) {
+      if (tokenRequestBody(init).grant_type === "refresh_token") {
         return jsonResponse({ access_token: "access-2", refresh_token: "refresh-2", token_type: "bearer", expires_in: 3600 });
       }
       return jsonResponse({ access_token: "access-1", refresh_token: "refresh-1", token_type: "bearer", expires_in: 3600 });
@@ -290,7 +326,7 @@ test("replays a mutation with the refreshed token after a 401", async () => {
   ]);
   expect(mutationCalls[0]?.body).toBe(mutationCalls[1]?.body);
   expect(tokenBodies).toHaveLength(2);
-  expect(tokenBodies[1] ?? "").toMatch(/refresh_token=refresh-1/);
+  expect(tokenRequestBody({ body: tokenBodies[1] }).refresh_token).toBe("refresh-1");
 });
 
 test("retains a refresh token when a rotated token response omits it", async () => {
@@ -301,8 +337,8 @@ test("retains a refresh token when a rotated token response omits it", async () 
     if (url.endsWith("/oauth/token")) {
       const body = String(init?.body);
       tokenBodies.push(body);
-      if (body.includes("grant_type=refresh_token")) {
-        const refreshCount = tokenBodies.filter((value) => value.includes("grant_type=refresh_token")).length;
+      if (tokenRequestBody(init).grant_type === "refresh_token") {
+        const refreshCount = tokenBodies.filter((value) => tokenRequestBody({ body: value }).grant_type === "refresh_token").length;
         return refreshCount === 1
           ? jsonResponse({ access_token: "access-2", token_type: "bearer", expires_in: 3600 })
           : jsonResponse({ access_token: "access-3", token_type: "bearer", expires_in: 3600 });
@@ -319,9 +355,9 @@ test("retains a refresh token when a rotated token response omits it", async () 
   await api.getUser();
 
   expect(tokenBodies).toHaveLength(3);
-  expect(tokenBodies[1] ?? "").toMatch(/grant_type=refresh_token/);
-  expect(tokenBodies[2] ?? "").toMatch(/grant_type=refresh_token/);
-  expect(tokenBodies[2] ?? "").toMatch(/refresh_token=refresh-1/);
+  expect(tokenRequestBody({ body: tokenBodies[1] }).grant_type).toBe("refresh_token");
+  expect(tokenRequestBody({ body: tokenBodies[2] }).grant_type).toBe("refresh_token");
+  expect(tokenRequestBody({ body: tokenBodies[2] }).refresh_token).toBe("refresh-1");
 });
 
 test("refreshes before a known token expiry", async () => {
@@ -333,7 +369,7 @@ test("refreshes before a known token expiry", async () => {
     if (url.endsWith("/oauth/token")) {
       const body = String(init?.body);
       tokenBodies.push(body);
-      if (body.includes("grant_type=refresh_token")) {
+      if (tokenRequestBody(init).grant_type === "refresh_token") {
         return jsonResponse({ access_token: "access-2", refresh_token: "refresh-2", token_type: "bearer", expires_in: 3600 });
       }
       return jsonResponse({ access_token: "access-1", refresh_token: "refresh-1", token_type: "bearer", expires_in: 60 });
@@ -349,7 +385,40 @@ test("refreshes before a known token expiry", async () => {
 
   expect(authorizations).toEqual(["Bearer access-1", "Bearer access-2"]);
   expect(tokenBodies).toHaveLength(2);
-  expect(tokenBodies[1] ?? "").toMatch(/grant_type=refresh_token/);
+  expect(tokenRequestBody({ body: tokenBodies[1] }).grant_type).toBe("refresh_token");
+});
+
+test("reads v22 saved recipes, custom products, and favorites", async () => {
+  const urls: string[] = [];
+  const fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const url = String(input);
+    urls.push(url);
+    if (url.endsWith("/oauth/token")) {
+      return jsonResponse({ access_token: "access-1", token_type: "bearer", expires_in: 3600 });
+    }
+    if (url.endsWith("/user/recipes")) return jsonResponse(["recipe-1"]);
+    if (url.endsWith("/recipes/recipe-1")) return jsonResponse({
+      id: "recipe-1",
+      name: "Overnight oats",
+      portion_count: 2,
+      nutrients: { "energy.energy": 400 },
+      servings: [],
+      instructions: [],
+    });
+    if (url.endsWith("/user/products")) return jsonResponse(["product-1"]);
+    if (url.endsWith("/user/favorites/recipe")) return jsonResponse([{ recipe_id: "recipe-1", portion_count: 1 }]);
+    if (url.endsWith("/user/favorites/product")) return jsonResponse([{ product_id: "product-1", amount: 100, serving_quantity: 1, serving: "gram" }]);
+    return jsonResponse({});
+  };
+
+  const api = new YazioApiClient({ username: "user@example.com", password: "secret", fetch });
+  await expect(api.getUserRecipes()).resolves.toEqual(["recipe-1"]);
+  await expect(api.getRecipe("recipe-1")).resolves.toMatchObject({ id: "recipe-1", name: "Overnight oats" });
+  await expect(api.getUserProducts()).resolves.toEqual(["product-1"]);
+  await expect(api.getFavoriteRecipes()).resolves.toEqual([{ recipe_id: "recipe-1", portion_count: 1 }]);
+  await expect(api.getFavoriteProducts()).resolves.toEqual([{ product_id: "product-1", amount: 100, serving_quantity: 1, serving: "gram" }]);
+
+  expect(urls.filter((url) => !url.endsWith("/oauth/token")).every((url) => url.includes("/v22/"))).toBe(true);
 });
 
 function initMethod(init?: RequestInit): string | undefined {

@@ -46,6 +46,10 @@ export const ProductIdSchema = z
   .min(1, "ID must not be empty")
   .describe("YAZIO product or item identifier");
 export const ItemIdSchema = ProductIdSchema.describe("Consumed-item identifier");
+export const RecipeIdSchema = ProductIdSchema.describe("YAZIO recipe identifier");
+export const ConsumedItemBucketSchema = z
+  .enum(["products", "recipe_portions", "simple_products"])
+  .describe("Diary entry collection containing the consumed-item ID");
 export const ServingTypeSchema = z
   .string()
   .trim()
@@ -87,6 +91,10 @@ export const GetProductInputSchema = z.object({
   id: ProductIdSchema.describe("Product ID to get details for"),
 });
 
+export const GetRecipeInputSchema = z.object({
+  id: RecipeIdSchema,
+});
+
 export const GetUserSuggestedProductsInputSchema = z.object({
   date: DateStringSchema.optional(),
   daytime: DaytimeSchema.default("breakfast").describe("Meal slot"),
@@ -114,14 +122,18 @@ export const AddConsumedItemsInputSchema = z.object({
 
 export const RemoveConsumedItemInputSchema = z.object({
   itemId: ItemIdSchema.describe("ID of the consumed item to remove, not the product ID"),
+  bucket: ConsumedItemBucketSchema.describe("Diary collection containing itemId: products, recipe_portions, or simple_products"),
 });
 
 export const RemoveConsumedItemsInputSchema = z.object({
-  itemIds: z
-    .array(ItemIdSchema)
+  items: z
+    .array(RemoveConsumedItemInputSchema)
     .min(1)
-    .refine((ids) => new Set(ids).size === ids.length, "Consumed-item IDs must be unique")
-    .describe("Consumed-item IDs to remove after confirming each exact entry"),
+    .refine(
+      (items) => new Set(items.map(({ itemId, bucket }) => `${bucket}:${itemId}`)).size === items.length,
+      "Consumed-item IDs must be unique within each diary collection",
+    )
+    .describe("Consumed-item IDs and their diary collections to remove after confirming each exact entry"),
 });
 
 export const AddWaterIntakeInputSchema = z.object({
@@ -152,6 +164,10 @@ export const AddSimpleProductInputSchema = z.object({
 export const GetFoodEntriesInputSchema = DateInputSchema;
 export const GetDailySummaryInputSchema = DateInputSchema;
 export const GetUserInfoInputSchema = EmptyInputSchema;
+export const GetUserRecipesInputSchema = EmptyInputSchema;
+export const GetUserProductsInputSchema = EmptyInputSchema;
+export const GetFavoriteRecipesInputSchema = EmptyInputSchema;
+export const GetFavoriteProductsInputSchema = EmptyInputSchema;
 export const GetUserWeightInputSchema = OptionalDateInputSchema;
 export const GetWaterIntakeInputSchema = DateInputSchema;
 export const GetUserExercisesInputSchema = OptionalDateInputSchema;
@@ -163,10 +179,16 @@ export type Daytime = z.infer<typeof DaytimeSchema>;
 export type GetFoodEntriesInput = z.infer<typeof GetFoodEntriesInputSchema>;
 export type GetDailySummaryInput = z.infer<typeof GetDailySummaryInputSchema>;
 export type GetUserInfoInput = z.infer<typeof GetUserInfoInputSchema>;
+export type GetUserRecipesInput = z.infer<typeof GetUserRecipesInputSchema>;
+export type GetUserProductsInput = z.infer<typeof GetUserProductsInputSchema>;
+export type GetFavoriteRecipesInput = z.infer<typeof GetFavoriteRecipesInputSchema>;
+export type GetFavoriteProductsInput = z.infer<typeof GetFavoriteProductsInputSchema>;
 export type GetUserWeightInput = z.infer<typeof GetUserWeightInputSchema>;
 export type GetWaterIntakeInput = z.infer<typeof GetWaterIntakeInputSchema>;
 export type SearchProductsInput = z.infer<typeof SearchProductsInputSchema>;
 export type GetProductInput = z.infer<typeof GetProductInputSchema>;
+export type GetRecipeInput = z.infer<typeof GetRecipeInputSchema>;
+export type ConsumedItemBucket = z.infer<typeof ConsumedItemBucketSchema>;
 export type GetUserExercisesInput = z.infer<typeof GetUserExercisesInputSchema>;
 export type GetUserSettingsInput = z.infer<typeof GetUserSettingsInputSchema>;
 export type GetUserSuggestedProductsInput = z.infer<typeof GetUserSuggestedProductsInputSchema>;

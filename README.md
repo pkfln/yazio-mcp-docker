@@ -1,6 +1,12 @@
 # YAZIO MCP server
 
-This repository contains an MCP server for the community-documented YAZIO v15 API.
+This repository contains an MCP server for the community-documented YAZIO v22 API.
+
+The v22 contract is reverse-engineered from the YAZIO mobile client and is not an
+official public API guarantee. Keep the configured mobile User-Agent current if
+YAZIO starts rejecting older client versions. See the [community v22
+specification](https://github.com/yazio-community/yazio-api-specification) for
+the OpenAPI paths and compatibility notes.
 
 The server uses the official TypeScript MCP SDK, exposes the standard stdio transport used by the OpenAI Secure MCP Tunnel, and can also run as a Streamable HTTP endpoint for local MCP clients.
 
@@ -135,13 +141,23 @@ The image builds the server with Bun and configures `tunnel-client` to launch th
 | `get_user_dietary_preferences` | Dietary restriction |
 | `get_user_suggested_products` | Suggested products for a meal slot |
 | `search_products` | Search the YAZIO food database |
-| `get_product` | Full product and serving details |
+| `get_product` | Full database or custom product and serving details |
+| `get_user_recipes` | IDs of recipes saved by the user |
+| `get_recipe` | Full recipe details, portions, nutrients, and instructions |
+| `get_user_products` | IDs of custom products created by the user |
+| `get_user_favorite_recipes` | Recipes saved as favorites |
+| `get_user_favorite_products` | Products saved as favorites |
 | `add_user_consumed_item` | Add a product to the diary |
 | `add_user_consumed_items` | Add multiple products to the diary in one request |
 | `add_user_simple_product` | Quick-add estimated nutrition when no suitable product exists |
-| `remove_user_consumed_item` | Delete a diary entry by consumed-item ID |
-| `remove_user_consumed_items` | Delete multiple diary entries by consumed-item ID |
+| `remove_user_consumed_item` | Delete one diary entry by ID and v22 collection |
+| `remove_user_consumed_items` | Delete multiple diary entries with explicit collections |
 | `add_user_water_intake` | Submit a new cumulative water total |
 | `add_user_water_intakes` | Submit multiple cumulative water totals in one request |
 
 The prompts `add_food_item`, `quick_add_food`, `remove_food_item`, and `add_water_intake` guide clients through the safe multi-step flows.
+
+The v22 contract exposes saved custom recipes and products as IDs, plus favorite
+collections; use the corresponding detail tools to resolve those IDs. It does
+not document a separate recently-used-items endpoint, so the server does not
+invent one or treat meal suggestions as a recent-history feed.
