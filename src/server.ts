@@ -33,7 +33,7 @@ import {
 import { YazioApiClient } from "./yazio-api";
 
 export const SERVER_NAME = "yazio-mcp";
-export const SERVER_VERSION = "1.0.0";
+export const SERVER_VERSION = "0.2.0";
 
 function stringify(value: unknown): string {
   if (typeof value === "string") return value;
@@ -67,7 +67,13 @@ export class YazioMcpServer {
   constructor(api = new YazioApiClient()) {
     this.api = api;
     this.server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION }, {
-      instructions: "Use the read-only YAZIO tools to inspect nutrition data. Confirm before using tools that change the diary or water log.",
+      instructions: [
+        "For diary workflows involving multiple dates, handle each requested date individually.",
+        "Before changing or deleting an entry, read the affected date and retain the original fields needed to identify or recreate it. Treat opaque IDs as references, not as names.",
+        "For destructive deletions, ensure the target is explicit and confirmed; do not guess when several entries match.",
+        "After every mutation, read the affected date again and verify the result. If an unambiguous discrepancy was caused by the mutation, correct it using the captured original or intended values; otherwise report the discrepancy instead of guessing.",
+        "When reporting results, resolve product and consumed-item IDs into names and relevant details whenever the API provides enough information.",
+      ].join(" "),
     });
     this.registerTools();
     this.registerPrompts();
@@ -195,27 +201,46 @@ export class YazioMcpServer {
   private registerPrompts(): void {
     this.server.registerPrompt("add_food_item", {
       title: "Add Food Item to Log",
-      description: "Guide for safely adding a food item to the user's consumption log.",
+      description: "Guide for adding a food item to the user's consumption log.",
     }, async () => ({ messages: [{ role: "user", content: { type: "text", text: [
-      "To add food, search_products first, then get_product to confirm servings and base unit.",
-      "Ask the user to choose when multiple products match. Call add_user_consumed_item with product_id, YYYY-MM-DD date, daytime, and amount in g/ml.",
-      "If a serving is used, send the serving type, serving_quantity, and the equivalent base-unit amount. Never guess a product ID.",
+      "To add a food item to the user's consumption log, follow this workflow:",
+      "1. Search first: call search_products with a query such as chicken breast, apple, or pasta. You may provide sex, countries, and locales when useful. Never invent a product_id.",
+      "2. Clarify the product: if multiple results match, ask the user which exact product they want before continuing.",
+      "3. Inspect product details: call get_product with the selected product_id. Use its servings and base_unit to understand the available serving types (for example portion, gram, piece, or cup) and whether the product is measured in grams (g) or millilitres (ml).",
+      "4. Clarify the quantity: if the user did not provide a serving type and quantity or a base-unit amount, ask which serving from the product details and how much they want to add. If the user gave a base-unit amount, use that directly.",
+      "5. Confirm the change with the user before writing to the diary. Adding an item is a mutating action.",
+      "6. Call add_user_consumed_item with product_id from search_products, date in YYYY-MM-DD format, daytime (breakfast, lunch, dinner, or snack), and a positive amount in the product's base unit. When using a serving, provide serving and serving_quantity together; when using a base-unit amount directly, those serving fields may be omitted.",
+      "Serving arithmetic: amount must be the base-unit amount, not the number of servings. For example, two apples at 100 g each means serving=piece, serving_quantity=2, amount=200; 200 g of chicken means amount=200 without a serving. A base unit such as g or ml can also be used as the serving when the product exposes it.",
+      "7. Verify the write: call get_user_consumed_items for the same date, resolve the new entry's product_id into its product name when needed, and confirm the date, meal slot, amount, and serving are correct. If the result is wrong, correct it immediately using the captured values.",
+      "For multiple dates, complete and verify one date at a time. Do not guess product IDs, serving sizes, dates, or meal slots. Ask a follow-up question whenever the product, serving, or quantity is ambiguous.",
     ].join("\n\n") } }] }));
 
     this.server.registerPrompt("remove_food_item", {
       title: "Remove Food Item from Log",
       description: "Guide for removing a food item from the user's consumption log.",
     }, async () => ({ messages: [{ role: "user", content: { type: "text", text: [
-      "Call get_user_consumed_items for the relevant date, identify the exact entry and its id, then call remove_user_consumed_item with itemId.",
-      "The consumed-item id is different from product_id. Ask for clarification if more than one entry matches.",
+      "To remove a food item from the user's consumption log, follow this workflow:",
+      "1. Retrieve the diary: call get_user_consumed_items with the relevant date in YYYY-MM-DD format.",
+      "2. Identify the exact entry using its id, product_id, name, date, daytime, amount, serving, and other product details. The consumed-item id is the id field, not product_id.",
+      "3. If multiple entries match, ask the user to clarify which one should be removed. Do not guess.",
+      "4. Keep the original product_id, date, daytime, amount, serving, and serving_quantity in context so the entry can be recreated if verification finds a mistake.",
+      "5. Tell the user which entry will be deleted and confirm the destructive change before continuing.",
+      "6. Call remove_user_consumed_item with itemId set to the selected consumed-item id.",
+      "7. Verify the deletion by calling get_user_consumed_items for the same date and resolving the remaining entries into names. If the wrong item was removed, recreate the original entry immediately from the captured fields and verify again.",
     ].join("\n\n") } }] }));
 
     this.server.registerPrompt("add_water_intake", {
       title: "Add Water Intake to Log",
-      description: "Guide for adding cumulative water intake to the user's log.",
+      description: "Guide for adding water intake entries to the user's log.",
     }, async () => ({ messages: [{ role: "user", content: { type: "text", text: [
-      "Call get_user_water_intake for the date first. Add the user's new millilitre amount to the returned cumulative water_intake.",
-      "Call add_user_water_intake with the new cumulative value and a YYYY-MM-DD HH:mm:ss timestamp. Do not send only the incremental amount.",
+      "To add water intake to the user's log, follow this workflow:",
+      "1. Read the current total first: call get_user_water_intake for the relevant date in YYYY-MM-DD format. The response contains cumulative water_intake in millilitres.",
+      "2. Add the user's new amount in millilitres to the current cumulative water_intake. Submit the total, not only the incremental amount.",
+      "3. Confirm the timestamp uses YYYY-MM-DD HH:mm:ss and that the resulting cumulative value is non-negative.",
+      "4. Confirm the log change with the user, then call add_user_water_intake with one object containing date and the new cumulative water_intake. The server wraps that object in the array required by the YAZIO API.",
+      "Example: if the current total is 500 ml and the user adds 250 ml, submit { date: \"2025-12-18 12:00:00\", water_intake: 750 }.",
+      "5. Verify the write by calling get_user_water_intake for the same day and confirm the cumulative value. If it is wrong, immediately submit the intended cumulative value and verify again.",
+      "Never submit only the new amount, and do not skip the initial read because another entry may have changed the total. For multiple dates, read, update, and verify each date separately.",
     ].join("\n\n") } }] }));
   }
 }
