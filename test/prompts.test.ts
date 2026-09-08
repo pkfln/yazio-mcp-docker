@@ -39,6 +39,8 @@ test("exposes the reference MCP prompts and quick-add guidance", async () => {
     expect(text(addFood)).toContain("search_products");
     expect(text(addFood)).toContain("get_product");
     expect(text(addFood)).toContain("serving_quantity");
+    expect(text(addFood)).toContain("YYYY-MM-DD HH:mm:ss");
+    expect(text(addFood)).toContain("preserve its source time-of-day");
     expect(text(quickAdd)).toContain("add_user_simple_product");
     expect(text(quickAdd)).toContain("search_products");
     expect(text(quickAdd)).toContain("only as a fallback");

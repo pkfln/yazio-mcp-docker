@@ -98,7 +98,7 @@ export const GetUserSuggestedProductsInputSchema = z.object({
 
 export const AddConsumedItemInputSchema = z.object({
   product_id: ProductIdSchema.describe("Product ID from search_products"),
-  date: DateStringSchema.describe("Date when the food was consumed"),
+  date: DateTimeStringSchema.describe("Timestamp when the food was consumed in YYYY-MM-DD HH:mm:ss format"),
   daytime: DaytimeSchema.describe("Meal slot"),
   amount: z.number().positive().describe("Amount in the product base unit (g or ml)"),
   serving: ServingTypeSchema.nullable().optional(),

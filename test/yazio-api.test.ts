@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 
+import { AddConsumedItemInputSchema } from "../src/schemas";
 import { YazioApiClient } from "../src/yazio-api";
 
 function jsonResponse(value: unknown, status = 200): Response {
@@ -8,6 +9,18 @@ function jsonResponse(value: unknown, status = 200): Response {
     headers: { "Content-Type": "application/json" },
   });
 }
+
+test("requires a timestamp for regular diary writes", () => {
+  const input = {
+    product_id: "product-1",
+    date: "2026-01-02 09:00:00",
+    daytime: "breakfast" as const,
+    amount: 200,
+  };
+
+  expect(AddConsumedItemInputSchema.safeParse(input).success).toBe(true);
+  expect(AddConsumedItemInputSchema.safeParse({ ...input, date: "2026-01-02" }).success).toBe(false);
+});
 
 test("authenticates with the Swagger-required form body and reuses the token", async () => {
   const calls: Array<{ url: string; init?: RequestInit }> = [];
@@ -45,7 +58,7 @@ test("uses exact public API paths and payload shapes for mutations", async () =>
   const api = new YazioApiClient({ username: "user@example.com", password: "secret", fetch });
   await api.addConsumedItem({
     product_id: "product-1",
-    date: "2026-01-02",
+    date: "2026-01-02 19:30:00",
     daytime: "dinner",
     amount: 150,
     serving: null,
@@ -60,7 +73,7 @@ test("uses exact public API paths and payload shapes for mutations", async () =>
   expect(add?.init?.headers instanceof Headers ? add.init.headers.get("content-type") : undefined).toBe("application/json");
   const addBody = JSON.parse(String(add?.init?.body)) as { products: Array<Record<string, unknown>> };
   expect(addBody.products[0]?.product_id).toBe("product-1");
-  expect(addBody.products[0]?.date).toBe("2026-01-02");
+  expect(addBody.products[0]?.date).toBe("2026-01-02 19:30:00");
   expect(addBody.products[0]?.daytime).toBe("dinner");
   expect(typeof addBody.products[0]?.id).toBe("string");
 
@@ -179,7 +192,7 @@ test("replays a mutation with the refreshed token after a 401", async () => {
   const api = new YazioApiClient({ username: "user@example.com", password: "secret", fetch });
   await api.addConsumedItem({
     product_id: "product-1",
-    date: "2026-01-02",
+    date: "2026-01-02 19:30:00",
     daytime: "dinner",
     amount: 150,
     serving: null,

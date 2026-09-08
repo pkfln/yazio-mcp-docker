@@ -113,6 +113,27 @@ export function formatYazioDate(value?: string | Date): string {
   return dateOnly;
 }
 
+/** Format the timestamp required for regular consumed-item writes. */
+export function formatYazioDateTime(value: string | Date): string {
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) throw new Error("Invalid date");
+    const date = formatYazioDate(value);
+    const hours = String(value.getHours()).padStart(2, "0");
+    const minutes = String(value.getMinutes()).padStart(2, "0");
+    const seconds = String(value.getSeconds()).padStart(2, "0");
+    return `${date} ${hours}:${minutes}:${seconds}`;
+  }
+
+  const match = /^(\d{4}-\d{2}-\d{2}) (\d{2}):(\d{2}):(\d{2})$/.exec(value);
+  if (!match) throw new Error(`Consumed-item timestamp must use YYYY-MM-DD HH:mm:ss format: ${value}`);
+  const [, dateOnly, hours, minutes, seconds] = match;
+  formatYazioDate(dateOnly);
+  if (Number(hours) > 23 || Number(minutes) > 59 || Number(seconds) > 59) {
+    throw new Error(`Invalid consumed-item timestamp: ${value}`);
+  }
+  return value;
+}
+
 function normalizeToken(
   payload: unknown,
   now: () => number,
@@ -332,7 +353,7 @@ export class YazioApiClient {
       products: [{
         id: randomUUID(),
         product_id: input.product_id,
-        date: formatYazioDate(input.date),
+        date: formatYazioDateTime(input.date),
         daytime: input.daytime,
         amount: input.amount,
         serving: input.serving,

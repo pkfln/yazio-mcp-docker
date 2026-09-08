@@ -76,6 +76,7 @@ export class YazioMcpServer {
         "After every mutation, read the affected date again and verify the result. If an unambiguous discrepancy was caused by the mutation, correct it using the captured original or intended values; otherwise report the discrepancy instead of guessing.",
         "When reporting results, resolve product and consumed-item IDs into names and relevant details whenever the API provides enough information.",
         "Prefer an existing YAZIO product: search the product database before using a quick-add simple product. Use a simple product only when no suitable match exists or the user explicitly requests an estimate.",
+        "Regular product diary writes require a full YYYY-MM-DD HH:mm:ss timestamp. When copying an entry, preserve its source time-of-day and change only the target calendar date; never use a date-only value for a write.",
       ].join(" "),
     });
     this.registerTools();
@@ -167,7 +168,7 @@ export class YazioMcpServer {
     }, async (args: GetProductInput) => this.run(async () => dataResult(`Product details for ID \"${args.id}\"`, await this.api.getProduct(args.id))) as Promise<CallToolResult>);
 
     this.server.registerTool("add_user_consumed_item", {
-      description: "Add one food product to the diary. Search for the product first and provide amount in g or ml.",
+      description: "Add one food product to the diary with a full YYYY-MM-DD HH:mm:ss timestamp. Search for the product first and provide amount in g or ml.",
       inputSchema: AddConsumedItemInputSchema,
       annotations: { readOnlyHint: false, idempotentHint: false },
     }, async (args: AddConsumedItemInput) => this.run(async () => {
@@ -221,9 +222,9 @@ export class YazioMcpServer {
       "3. Inspect product details: call get_product with the selected product_id. Use its servings and base_unit to understand the available serving types (for example portion, gram, piece, or cup) and whether the product is measured in grams (g) or millilitres (ml).",
       "4. Clarify the quantity: if the user did not provide a serving type and quantity or a base-unit amount, ask which serving from the product details and how much they want to add. If the user gave a base-unit amount, use that directly.",
       "5. Confirm the change with the user before writing to the diary. Adding an item is a mutating action.",
-      "6. Call add_user_consumed_item with product_id from search_products, date in YYYY-MM-DD format, daytime (breakfast, lunch, dinner, or snack), and a positive amount in the product's base unit. When using a serving, provide serving and serving_quantity together; when using a base-unit amount directly, those serving fields may be omitted.",
+      "6. Call add_user_consumed_item with product_id from search_products, date in YYYY-MM-DD HH:mm:ss format, daytime (breakfast, lunch, dinner, or snack), and a positive amount in the product's base unit. When copying an entry, preserve its source time-of-day and replace only the calendar date. When using a serving, provide serving and serving_quantity together; when using a base-unit amount directly, those serving fields may be omitted.",
       "Serving arithmetic: amount must be the base-unit amount, not the number of servings. For example, two apples at 100 g each means serving=piece, serving_quantity=2, amount=200; 200 g of chicken means amount=200 without a serving. A base unit such as g or ml can also be used as the serving when the product exposes it.",
-      "7. Verify the write: call get_user_consumed_items for the same date, resolve the new entry's product_id into its product name when needed, and confirm the date, meal slot, amount, and serving are correct. If the result is wrong, correct it immediately using the captured values.",
+      "7. Verify the write: call get_user_consumed_items for the target calendar date, resolve the new entry's product_id into its product name when needed, and confirm the full timestamp, meal slot, amount, and serving are correct. If the result is wrong, correct it immediately using the captured values.",
       "For multiple dates, complete and verify one date at a time. Do not guess product IDs, serving sizes, dates, or meal slots. Ask a follow-up question whenever the product, serving, or quantity is ambiguous.",
     ].join("\n\n") } }] }));
 
