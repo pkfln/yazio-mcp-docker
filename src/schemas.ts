@@ -62,6 +62,12 @@ export const OptionalDateInputSchema = z.object({
 
 export const EmptyInputSchema = z.object({});
 
+export const DateTimeStringSchema = z
+  .string()
+  .regex(DATETIME_PATTERN, "Use YYYY-MM-DD HH:mm:ss format")
+  .refine(isCalendarDateTime, "Timestamp must be a valid calendar date and time")
+  .describe("Timestamp in YYYY-MM-DD HH:mm:ss format");
+
 export const SearchProductsInputSchema = z.object({
   query: z.string().trim().min(1).describe("Search query"),
   sex: z.enum(["male", "female"]).default("male").describe("User sex"),
@@ -94,9 +100,9 @@ export const AddConsumedItemInputSchema = z.object({
   product_id: ProductIdSchema.describe("Product ID from search_products"),
   date: DateStringSchema.describe("Date when the food was consumed"),
   daytime: DaytimeSchema.describe("Meal slot"),
-  amount: z.number().finite().positive().describe("Amount in the product base unit (g or ml)"),
+  amount: z.number().positive().describe("Amount in the product base unit (g or ml)"),
   serving: ServingTypeSchema.nullable().optional(),
-  serving_quantity: z.number().finite().positive().nullable().optional(),
+  serving_quantity: z.number().positive().nullable().optional(),
 });
 
 export const RemoveConsumedItemInputSchema = z.object({
@@ -104,16 +110,21 @@ export const RemoveConsumedItemInputSchema = z.object({
 });
 
 export const AddWaterIntakeInputSchema = z.object({
-  date: z
-    .string()
-    .regex(DATETIME_PATTERN, "Use YYYY-MM-DD HH:mm:ss format")
-    .refine(isCalendarDateTime, "Timestamp must be a valid calendar date and time")
-    .describe("Entry timestamp in YYYY-MM-DD HH:mm:ss format"),
+  date: DateTimeStringSchema.describe("Entry timestamp in YYYY-MM-DD HH:mm:ss format"),
   water_intake: z
     .number()
-    .finite()
     .nonnegative()
     .describe("Cumulative water intake in millilitres"),
+});
+
+export const AddSimpleProductInputSchema = z.object({
+  name: z.string().trim().min(1).describe("Display name for the quick-add food entry"),
+  date: DateTimeStringSchema.describe("Entry timestamp in YYYY-MM-DD HH:mm:ss format"),
+  daytime: DaytimeSchema.describe("Meal slot"),
+  energy: z.number().nonnegative().describe("Estimated energy in kilocalories"),
+  carb: z.number().nonnegative().optional().describe("Estimated carbohydrates in grams"),
+  protein: z.number().nonnegative().optional().describe("Estimated protein in grams"),
+  fat: z.number().nonnegative().optional().describe("Estimated fat in grams"),
 });
 
 export const GetFoodEntriesInputSchema = DateInputSchema;
@@ -140,5 +151,6 @@ export type GetUserSuggestedProductsInput = z.infer<typeof GetUserSuggestedProdu
 export type AddConsumedItemInput = z.infer<typeof AddConsumedItemInputSchema>;
 export type RemoveConsumedItemInput = z.infer<typeof RemoveConsumedItemInputSchema>;
 export type AddWaterIntakeInput = z.infer<typeof AddWaterIntakeInputSchema>;
+export type AddSimpleProductInput = z.infer<typeof AddSimpleProductInputSchema>;
 export type GetDietaryPreferencesInput = z.infer<typeof GetDietaryPreferencesInputSchema>;
 export type GetUserGoalsInput = z.infer<typeof GetUserGoalsInputSchema>;

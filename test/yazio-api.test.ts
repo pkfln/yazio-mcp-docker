@@ -70,6 +70,50 @@ test("uses exact public API paths and payload shapes for mutations", async () =>
   expect(JSON.parse(String(water?.init?.body))).toEqual([{ date: "2026-01-02 12:00:00", water_intake: 750 }]);
 });
 
+test("adds a quick-add simple product with estimated nutrients", async () => {
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const url = String(input);
+    calls.push({ url, init });
+    if (url.endsWith("/oauth/token")) {
+      return jsonResponse({ access_token: "access-1", token_type: "bearer", expires_in: 3600 });
+    }
+    return new Response(null, { status: 204 });
+  };
+
+  const api = new YazioApiClient({ username: "user@example.com", password: "secret", fetch });
+  const id = await api.addSimpleProduct({
+    name: "Homemade sandwich",
+    date: "2026-01-02 12:00:00",
+    daytime: "lunch",
+    energy: 520,
+    carb: 48,
+    protein: 27,
+    fat: 22,
+  });
+
+  const call = calls.find(({ url, init }) => url.endsWith("/user/consumed-items") && initMethod(init) === "POST");
+  expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+  expect(call).toBeDefined();
+  expect(JSON.parse(String(call?.init?.body))).toEqual({
+    products: [],
+    recipe_portions: [],
+    simple_products: [{
+      id,
+      date: "2026-01-02 12:00:00",
+      daytime: "lunch",
+      type: "simple_product",
+      name: "Homemade sandwich",
+      nutrients: {
+        "energy.energy": 520,
+        "nutrient.carb": 48,
+        "nutrient.protein": 27,
+        "nutrient.fat": 22,
+      },
+    }],
+  });
+});
+
 test("encodes search filters and refreshes once after a 401", async () => {
   const calls: string[] = [];
   const tokenBodies: string[] = [];

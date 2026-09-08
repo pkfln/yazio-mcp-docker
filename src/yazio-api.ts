@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import type {
   AddConsumedItemRequest,
+  AddSimpleProductRequest,
   AddWaterIntakeRequest,
   YazioConsumedItems,
   YazioDailySummary,
@@ -338,6 +339,28 @@ export class YazioApiClient {
         serving_quantity: input.serving_quantity,
       }],
     });
+  }
+
+  async addSimpleProduct(input: AddSimpleProductRequest): Promise<string> {
+    const id = randomUUID();
+    const nutrients: Record<string, number> = { "energy.energy": input.energy };
+    if (input.carb !== undefined) nutrients["nutrient.carb"] = input.carb;
+    if (input.protein !== undefined) nutrients["nutrient.protein"] = input.protein;
+    if (input.fat !== undefined) nutrients["nutrient.fat"] = input.fat;
+
+    await this.requestJson("/user/consumed-items", "POST", {
+      products: [],
+      recipe_portions: [],
+      simple_products: [{
+        id,
+        date: input.date,
+        daytime: input.daytime,
+        type: "simple_product",
+        name: input.name,
+        nutrients,
+      }],
+    });
+    return id;
   }
 
   async removeConsumedItem(itemId: string): Promise<unknown> {

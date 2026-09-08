@@ -3,6 +3,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 
 import {
   AddConsumedItemInputSchema,
+  AddSimpleProductInputSchema,
   AddWaterIntakeInputSchema,
   GetDailySummaryInputSchema,
   GetDietaryPreferencesInputSchema,
@@ -18,6 +19,7 @@ import {
   RemoveConsumedItemInputSchema,
   SearchProductsInputSchema,
   type AddConsumedItemInput,
+  type AddSimpleProductInput,
   type AddWaterIntakeInput,
   type GetDailySummaryInput,
   type GetFoodEntriesInput,
@@ -73,6 +75,7 @@ export class YazioMcpServer {
         "For destructive deletions, ensure the target is explicit and confirmed; do not guess when several entries match.",
         "After every mutation, read the affected date again and verify the result. If an unambiguous discrepancy was caused by the mutation, correct it using the captured original or intended values; otherwise report the discrepancy instead of guessing.",
         "When reporting results, resolve product and consumed-item IDs into names and relevant details whenever the API provides enough information.",
+        "Prefer an existing YAZIO product: search the product database before using a quick-add simple product. Use a simple product only when no suitable match exists or the user explicitly requests an estimate.",
       ].join(" "),
     });
     this.registerTools();
@@ -95,7 +98,7 @@ export class YazioMcpServer {
     }, async () => this.run(async () => dataResult("User info", await this.api.getUser())) as Promise<CallToolResult>);
 
     this.server.registerTool("get_user_consumed_items", {
-      description: "Get all diary food entries for a date (YYYY-MM-DD).",
+      description: "Get all diary food entries, including quick-add simple products, for a date (YYYY-MM-DD).",
       inputSchema: GetFoodEntriesInputSchema,
       annotations: { readOnlyHint: true, idempotentHint: true },
     }, async (args: GetFoodEntriesInput) => this.run(async () => dataResult(`Food entries for ${args.date}`, await this.api.getConsumedItems(args.date))) as Promise<CallToolResult>);
@@ -179,8 +182,17 @@ export class YazioMcpServer {
       return textResult("Successfully added consumed item.");
     }) as Promise<CallToolResult>);
 
+    this.server.registerTool("add_user_simple_product", {
+      description: "Quick-add a food entry with estimated nutrition values after product search finds no suitable match, or when the user explicitly requests an estimate.",
+      inputSchema: AddSimpleProductInputSchema,
+      annotations: { readOnlyHint: false, idempotentHint: false },
+    }, async (args: AddSimpleProductInput) => this.run(async () => {
+      const id = await this.api.addSimpleProduct(args);
+      return textResult(`Successfully added quick-add food entry "${args.name}" with ID: ${id}`);
+    }) as Promise<CallToolResult>);
+
     this.server.registerTool("remove_user_consumed_item", {
-      description: "Remove a diary entry by its consumed-item ID. Retrieve diary entries first to identify the ID.",
+      description: "Remove a regular or quick-add diary entry by its consumed-item ID. Retrieve diary entries first to identify the ID.",
       inputSchema: RemoveConsumedItemInputSchema,
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
     }, async (args: RemoveConsumedItemInput) => this.run(async () => {
@@ -213,6 +225,19 @@ export class YazioMcpServer {
       "Serving arithmetic: amount must be the base-unit amount, not the number of servings. For example, two apples at 100 g each means serving=piece, serving_quantity=2, amount=200; 200 g of chicken means amount=200 without a serving. A base unit such as g or ml can also be used as the serving when the product exposes it.",
       "7. Verify the write: call get_user_consumed_items for the same date, resolve the new entry's product_id into its product name when needed, and confirm the date, meal slot, amount, and serving are correct. If the result is wrong, correct it immediately using the captured values.",
       "For multiple dates, complete and verify one date at a time. Do not guess product IDs, serving sizes, dates, or meal slots. Ask a follow-up question whenever the product, serving, or quantity is ambiguous.",
+    ].join("\n\n") } }] }));
+
+    this.server.registerPrompt("quick_add_food", {
+      title: "Quick Add Food from Estimate",
+      description: "Guide for logging food with estimated nutrition when no YAZIO product ID is available.",
+    }, async () => ({ messages: [{ role: "user", content: { type: "text", text: [
+      "Use quick-add only as a fallback. First call search_products using the food or meal description, including useful country and locale filters. If a suitable database product exists, use get_product and the normal add_user_consumed_item flow instead; do not create a simple product.",
+      "Continue with this workflow only when no suitable product match exists or the user explicitly requests an estimate. A photo or free-text description alone is not a reason to skip the product search.",
+      "1. Estimate a concise name, energy in kilocalories, and—when possible—carbohydrates, protein, and fat in grams. State the portion and preparation assumptions clearly.",
+      "2. If the estimate, portion, date, time, or meal slot is ambiguous, ask a follow-up question. Do not invent a date or timestamp. Tell the user the estimates before writing and obtain confirmation because this is a mutating action.",
+      "3. Call add_user_simple_product with name, date in YYYY-MM-DD HH:mm:ss format, daytime (breakfast, lunch, dinner, or snack), energy, and any estimated carb, protein, and fat values.",
+      "4. Verify the write by calling get_user_consumed_items for the calendar date. Locate the new simple_products entry by its generated ID or name and confirm its timestamp, meal slot, and nutrients. If the result is wrong, explain the discrepancy; if correction requires deletion, confirm that removal before using remove_user_consumed_item, then recreate it with corrected values and verify again.",
+      "For multiple dates, complete and verify one date at a time. Keep the generated ID so the quick-add entry can be removed if the user corrects the estimate.",
     ].join("\n\n") } }] }));
 
     this.server.registerPrompt("remove_food_item", {

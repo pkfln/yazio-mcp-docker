@@ -185,10 +185,20 @@ export interface YazioConsumedItem {
   daytime: "breakfast" | "lunch" | "dinner" | "snack";
 }
 
+export interface YazioSimpleProduct {
+  id: string;
+  date: string;
+  daytime: "breakfast" | "lunch" | "dinner" | "snack";
+  type: "simple_product";
+  name: string;
+  nutrients: Record<string, number>;
+  is_ai_generated?: boolean;
+}
+
 export interface YazioConsumedItems {
   products: YazioConsumedItem[];
   recipe_portions: unknown[];
-  simple_products: unknown[];
+  simple_products: YazioSimpleProduct[];
 }
 
 export interface AddConsumedItemRequest {
@@ -203,4 +213,14 @@ export interface AddConsumedItemRequest {
 export interface AddWaterIntakeRequest {
   date: string;
   water_intake: number;
+}
+
+export interface AddSimpleProductRequest {
+  name: string;
+  date: string;
+  daytime: "breakfast" | "lunch" | "dinner" | "snack";
+  energy: number;
+  carb?: number;
+  protein?: number;
+  fat?: number;
 }
