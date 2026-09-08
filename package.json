@@ -1,0 +1,30 @@
+{
+  "name": "yazio-mcp-server",
+  "version": "0.1.0",
+  "description": "A Bun-native MCP server for the YAZIO public API.",
+  "type": "module",
+  "bin": {
+    "yazio-mcp": "dist/index.js"
+  },
+  "scripts": {
+    "build": "bun run typecheck && bun build ./src/index.ts --target=bun --outfile=dist/index.js --sourcemap=inline",
+    "dev": "bun --watch ./src/index.ts",
+    "dev:docker": "./scripts/test-dev-docker.sh",
+    "start": "bun ./dist/index.js",
+    "typecheck": "bunx tsc --noEmit",
+    "test": "bun test",
+    "test:docker": "./scripts/test-dev-docker.sh"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "zod": "^4.5.4"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.2",
+    "@types/node": "^26.5.0",
+    "typescript": "^7.0.2"
+  },
+  "engines": {
+    "bun": ">=1.4.2"
+  }
+}
