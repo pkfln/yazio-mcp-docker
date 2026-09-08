@@ -4,10 +4,15 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 
 import { createYazioMcpServer, SERVER_NAME, SERVER_VERSION } from "./server";
+import { verifyYazioLogin } from "./startup";
 import { YazioApiClient } from "./yazio-api";
 
 async function runStdio(): Promise<void> {
-  const server = createYazioMcpServer();
+  const api = new YazioApiClient();
+  await verifyYazioLogin(api);
+  console.error("YAZIO login verified");
+
+  const server = createYazioMcpServer(api);
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error(`${SERVER_NAME} ${SERVER_VERSION} running on stdio`);
@@ -35,6 +40,9 @@ async function runHttp(): Promise<void> {
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("MCP_PORT must be an integer from 1 to 65535");
 
   const api = new YazioApiClient();
+  await verifyYazioLogin(api);
+  console.error("YAZIO login verified");
+
   const hosts = (process.env.MCP_ALLOWED_HOSTS ?? host).split(",").map((value) => value.trim()).filter(Boolean);
   const allowedHostHeaders = hosts.flatMap((value) => [value, `${value}:${port}`]);
   const origins = allowedOrigins(host, port);
@@ -88,5 +96,5 @@ async function main(): Promise<void> {
 
 main().catch((error) => {
   console.error(error instanceof Error ? error.message : error);
-  process.exitCode = 1;
+  process.exit(1);
 });

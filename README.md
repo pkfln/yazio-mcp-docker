@@ -39,7 +39,7 @@ For a local stdio MCP client, use a configuration like:
 }
 ```
 
-The server authenticates lazily on the first YAZIO request. This means a client can complete MCP initialization and discover the tools even when credentials are missing; a tool call returns a useful error instead of terminating the server process.
+The server verifies the YAZIO login with `GET /user` before it exposes an MCP transport. Missing or invalid credentials make startup fail with a nonzero exit status, so a tunnel reports the failure instead of appearing healthy with unusable tools.
 
 ## Temporary Docker dev container
 
