@@ -41,6 +41,13 @@ For a local stdio MCP client, use a configuration like:
 
 The server verifies the YAZIO login with `GET /user` before it exposes an MCP transport. Missing or invalid credentials make startup fail with a nonzero exit status, so a tunnel reports the failure instead of appearing healthy with unusable tools.
 
+The API client refreshes OAuth tokens proactively before their expiry and retries
+each API request once with a refreshed token when YAZIO returns `401 Unauthorized`.
+This also covers diary mutations: the original request body is replayed with the
+new token. Refresh-token rotation is preserved when YAZIO omits the token from a
+refresh response; if a refresh token is rejected, configured username/password
+credentials are used as a fallback.
+
 ## Temporary Docker dev container
 
 When Docker is more convenient than a local Bun install, run:

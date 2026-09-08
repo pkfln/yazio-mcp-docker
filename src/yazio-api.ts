@@ -19,6 +19,9 @@ import type {
 } from "./types";
 
 export const YAZIO_BASE_URL = "https://yzapi.yazio.com/v15";
+
+const DEFAULT_TOKEN_LIFETIME_SECONDS = 172800;
+const TOKEN_REFRESH_SKEW_MS = 30000;
 export const YAZIO_CLIENT_ID = "1_4hiybetvfksgw40o0sog4s884kwc840wwso8go4k8c04goo4c";
 export const YAZIO_CLIENT_SECRET = "6rok2m65xuskgkgogw40wkkk8sw0osg84s8cggsc4woos4s8o";
 
@@ -109,16 +112,31 @@ export function formatYazioDate(value?: string | Date): string {
   return dateOnly;
 }
 
-function normalizeToken(payload: unknown, now: () => number): YazioToken {
+function normalizeToken(
+  payload: unknown,
+  now: () => number,
+  previousRefreshToken?: string,
+): YazioToken {
   if (!isRecord(payload) || typeof payload.access_token !== "string") {
     throw new YazioApiError("YAZIO returned an invalid OAuth token response", 502, payload);
   }
-  const expiresIn = typeof payload.expires_in === "number" ? payload.expires_in : 172800;
+  const rawExpiresIn = payload.expires_in;
+  const parsedExpiresIn = typeof rawExpiresIn === "number"
+    ? rawExpiresIn
+    : typeof rawExpiresIn === "string"
+      ? Number(rawExpiresIn)
+      : Number.NaN;
+  const expiresIn = Number.isFinite(parsedExpiresIn) && parsedExpiresIn >= 0
+    ? parsedExpiresIn
+    : DEFAULT_TOKEN_LIFETIME_SECONDS;
+  const refreshToken = typeof payload.refresh_token === "string" && payload.refresh_token.length > 0
+    ? payload.refresh_token
+    : previousRefreshToken;
   return {
     access_token: payload.access_token,
     token_type: typeof payload.token_type === "string" ? payload.token_type : "bearer",
     expires_in: expiresIn,
-    refresh_token: typeof payload.refresh_token === "string" ? payload.refresh_token : undefined,
+    refresh_token: refreshToken,
     expires_at: now() + expiresIn * 1000,
   };
 }
@@ -165,6 +183,7 @@ export class YazioApiClient {
   private async requestToken(
     values: Record<string, string>,
     formEncoded: boolean,
+    previousRefreshToken?: string,
   ): Promise<YazioToken> {
     const headers = new Headers({ Accept: "application/json" });
     let body: string;
@@ -189,7 +208,7 @@ export class YazioApiClient {
         payload,
       );
     }
-    return normalizeToken(payload, this.now);
+    return normalizeToken(payload, this.now, previousRefreshToken);
   }
 
   private async authenticate(): Promise<YazioToken> {
@@ -197,13 +216,14 @@ export class YazioApiClient {
 
     this.authPromise = (async () => {
       if (this.token?.refresh_token) {
+        const previousRefreshToken = this.token.refresh_token;
         try {
           const refreshed = await this.requestToken({
             client_id: this.clientId,
             client_secret: this.clientSecret,
             grant_type: "refresh_token",
-            refresh_token: this.token.refresh_token,
-          }, true);
+            refresh_token: previousRefreshToken,
+          }, true, previousRefreshToken);
           this.token = refreshed;
           return refreshed;
         } catch (error) {
@@ -245,23 +265,34 @@ export class YazioApiClient {
     return this.authPromise;
   }
 
+  private hasFreshToken(token: YazioToken | null): token is YazioToken {
+    return token !== null && token.expires_at > this.now() + TOKEN_REFRESH_SKEW_MS;
+  }
+
   private async accessToken(): Promise<string> {
-    if (this.token && this.token.expires_at > this.now() + 30000) return this.token.access_token;
+    if (this.hasFreshToken(this.token)) return this.token.access_token;
     return (await this.authenticate()).access_token;
+  }
+
+  private async recoverFromUnauthorized(failedAccessToken: string): Promise<void> {
+    // Another in-flight request may already have rotated the token. Reuse a
+    // fresh replacement instead of refreshing again and potentially rotating
+    // the refresh token a second time.
+    if (this.token?.access_token === failedAccessToken) {
+      this.token = { ...this.token, expires_at: 0 };
+    }
+    if (!this.hasFreshToken(this.token)) await this.authenticate();
   }
 
   private async request<T>(path: string, init: RequestInit = {}, retryAuth = true): Promise<T> {
     const headers = new Headers(init.headers);
     headers.set("Accept", "application/json");
-    headers.set("Authorization", `Bearer ${await this.accessToken()}`);
+    const accessToken = await this.accessToken();
+    headers.set("Authorization", `Bearer ${accessToken}`);
 
     const response = await this.fetchFn(this.url(path), { ...init, headers });
     if (response.status === 401 && retryAuth) {
-      // Keep the refresh token while forcing the cached access token to be
-      // considered stale. This avoids an unnecessary password login after a
-      // server-side token revocation.
-      if (this.token) this.token = { ...this.token, expires_at: 0 };
-      await this.authenticate();
+      await this.recoverFromUnauthorized(accessToken);
       return this.request<T>(path, init, false);
     }
 

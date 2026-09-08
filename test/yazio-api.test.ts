@@ -97,8 +97,116 @@ test("encodes search filters and refreshes once after a 401", async () => {
   const api = new YazioApiClient({ username: "user@example.com", password: "secret", fetch });
   await api.searchProducts({ query: "ice cream", sex: "female", countries: ["DE", "US"], locales: ["de_DE"] });
   expect(calls.some((call) => call.includes("query=ice+cream") && call.includes("countries=DE%2CUS") && call.includes("locales=de_DE"))).toBe(true);
+  expect(calls.filter((call) => call.includes("/products/search")).map((call) => call.split(" ").at(-1))).toEqual([
+    "access-1",
+    "access-2",
+  ]);
   expect(tokenBodies.length).toBe(2);
   expect(tokenBodies[0] ?? "").toMatch(/grant_type=password/);
+  expect(tokenBodies[1] ?? "").toMatch(/grant_type=refresh_token/);
+});
+
+test("replays a mutation with the refreshed token after a 401", async () => {
+  const mutationCalls: Array<{ authorization: string | null; body: string }> = [];
+  const tokenBodies: string[] = [];
+  let mutationCount = 0;
+  const fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const url = String(input);
+    if (url.endsWith("/oauth/token")) {
+      const body = String(init?.body);
+      tokenBodies.push(body);
+      if (body.includes("grant_type=refresh_token")) {
+        return jsonResponse({ access_token: "access-2", refresh_token: "refresh-2", token_type: "bearer", expires_in: 3600 });
+      }
+      return jsonResponse({ access_token: "access-1", refresh_token: "refresh-1", token_type: "bearer", expires_in: 3600 });
+    }
+    if (url.endsWith("/user/consumed-items") && init?.method === "POST") {
+      mutationCount += 1;
+      mutationCalls.push({
+        authorization: init.headers instanceof Headers ? init.headers.get("authorization") : null,
+        body: String(init.body),
+      });
+      if (mutationCount === 1) return jsonResponse({ error: "expired" }, 401);
+      return jsonResponse({ ok: true });
+    }
+    return jsonResponse({});
+  };
+
+  const api = new YazioApiClient({ username: "user@example.com", password: "secret", fetch });
+  await api.addConsumedItem({
+    product_id: "product-1",
+    date: "2026-01-02",
+    daytime: "dinner",
+    amount: 150,
+    serving: null,
+    serving_quantity: null,
+  });
+
+  expect(mutationCalls.map(({ authorization }) => authorization)).toEqual([
+    "Bearer access-1",
+    "Bearer access-2",
+  ]);
+  expect(mutationCalls[0]?.body).toBe(mutationCalls[1]?.body);
+  expect(tokenBodies).toHaveLength(2);
+  expect(tokenBodies[1] ?? "").toMatch(/refresh_token=refresh-1/);
+});
+
+test("retains a refresh token when a rotated token response omits it", async () => {
+  const tokenBodies: string[] = [];
+  let userCalls = 0;
+  const fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const url = String(input);
+    if (url.endsWith("/oauth/token")) {
+      const body = String(init?.body);
+      tokenBodies.push(body);
+      if (body.includes("grant_type=refresh_token")) {
+        const refreshCount = tokenBodies.filter((value) => value.includes("grant_type=refresh_token")).length;
+        return refreshCount === 1
+          ? jsonResponse({ access_token: "access-2", token_type: "bearer", expires_in: 3600 })
+          : jsonResponse({ access_token: "access-3", token_type: "bearer", expires_in: 3600 });
+      }
+      return jsonResponse({ access_token: "access-1", refresh_token: "refresh-1", token_type: "bearer", expires_in: 3600 });
+    }
+    userCalls += 1;
+    if (userCalls === 1 || userCalls === 3) return jsonResponse({ error: "expired" }, 401);
+    return jsonResponse({ email: "user@example.com" });
+  };
+
+  const api = new YazioApiClient({ username: "user@example.com", password: "secret", fetch });
+  await api.getUser();
+  await api.getUser();
+
+  expect(tokenBodies).toHaveLength(3);
+  expect(tokenBodies[1] ?? "").toMatch(/grant_type=refresh_token/);
+  expect(tokenBodies[2] ?? "").toMatch(/grant_type=refresh_token/);
+  expect(tokenBodies[2] ?? "").toMatch(/refresh_token=refresh-1/);
+});
+
+test("refreshes before a known token expiry", async () => {
+  let now = 1_000_000;
+  const tokenBodies: string[] = [];
+  const authorizations: string[] = [];
+  const fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const url = String(input);
+    if (url.endsWith("/oauth/token")) {
+      const body = String(init?.body);
+      tokenBodies.push(body);
+      if (body.includes("grant_type=refresh_token")) {
+        return jsonResponse({ access_token: "access-2", refresh_token: "refresh-2", token_type: "bearer", expires_in: 3600 });
+      }
+      return jsonResponse({ access_token: "access-1", refresh_token: "refresh-1", token_type: "bearer", expires_in: 60 });
+    }
+    authorizations.push(init?.headers instanceof Headers ? init.headers.get("authorization") ?? "" : "");
+    return jsonResponse({ email: "user@example.com" });
+  };
+
+  const api = new YazioApiClient({ username: "user@example.com", password: "secret", fetch, now: () => now });
+  await api.getUser();
+  now += 31_000;
+  await api.getUser();
+
+  expect(authorizations).toEqual(["Bearer access-1", "Bearer access-2"]);
+  expect(tokenBodies).toHaveLength(2);
   expect(tokenBodies[1] ?? "").toMatch(/grant_type=refresh_token/);
 });
 
