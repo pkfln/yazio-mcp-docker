@@ -98,10 +98,7 @@ export const GetRecipeInputSchema = z.object({
 export const GetUserSuggestedProductsInputSchema = z.object({
   date: DateStringSchema.optional(),
   daytime: DaytimeSchema.default("breakfast").describe("Meal slot"),
-  // Kept for compatibility with the previous server. YAZIO's suggested
-  // products endpoint does not use these fields.
-  query: z.string().trim().min(1).optional().describe("Compatibility field; ignored by YAZIO"),
-  limit: z.number().int().positive().optional().describe("Compatibility field; ignored by YAZIO"),
+  limit: z.number().int().positive().optional().describe("Optional maximum number of suggestions returned by the MCP server"),
 });
 
 export const AddConsumedItemInputSchema = z.object({

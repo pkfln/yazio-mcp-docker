@@ -130,7 +130,7 @@ The image builds the server with Bun and configures `tunnel-client` to launch th
 
 | Tool | Purpose |
 | --- | --- |
-| `get_user` | User profile and preferences |
+| `get_user` | User profile and preferences (sensitive auth/account identifiers redacted) |
 | `get_user_consumed_items` | Diary entries for a date |
 | `get_user_daily_summary` | Nutrition totals and goals for a date |
 | `get_user_water_intake` | Cumulative water intake for a date |
@@ -139,8 +139,8 @@ The image builds the server with Bun and configures `tunnel-client` to launch th
 | `get_user_goals` | Calorie, macro, water, step, and weight goals |
 | `get_user_settings` | Tracker and reminder settings |
 | `get_user_dietary_preferences` | Dietary restriction |
-| `get_user_suggested_products` | Suggested products for a meal slot |
-| `search_products` | Search the YAZIO food database |
+| `get_user_suggested_products` | Recommendation/history-style products for a meal slot; optional MCP-side limit |
+| `search_products` | Search the YAZIO food database; country/locale values influence ranking rather than strict filtering |
 | `get_product` | Full database or custom product and serving details |
 | `get_user_recipes` | IDs of recipes saved by the user |
 | `get_recipe` | Full recipe details, portions, nutrients, and instructions |
@@ -152,7 +152,7 @@ The image builds the server with Bun and configures `tunnel-client` to launch th
 | `add_user_simple_product` | Quick-add estimated nutrition when no suitable product exists |
 | `remove_user_consumed_item` | Delete one diary entry by ID and v22 collection |
 | `remove_user_consumed_items` | Delete multiple diary entries with explicit collections |
-| `add_user_water_intake` | Submit a new cumulative water total |
+| `add_user_water_intake` | Set a cumulative water total (the API has no documented delete-history operation) |
 | `add_user_water_intakes` | Submit multiple cumulative water totals in one request |
 
 The prompts `add_food_item`, `quick_add_food`, `remove_food_item`, and `add_water_intake` guide clients through the safe multi-step flows.
@@ -161,3 +161,9 @@ The v22 contract exposes saved custom recipes and products as IDs, plus favorite
 collections; use the corresponding detail tools to resolve those IDs. It does
 not document a separate recently-used-items endpoint, so the server does not
 invent one or treat meal suggestions as a recent-history feed.
+
+`get_user_suggested_products` is therefore recommendation/history-style data
+for a date and meal slot, not a text search; use `search_products` for named
+foods. Its optional `limit` is applied locally by the MCP after the YAZIO
+response. Search country and locale values are ranking hints, so inspect the
+returned language and country metadata before selecting a product.

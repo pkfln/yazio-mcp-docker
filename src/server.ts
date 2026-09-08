@@ -78,6 +78,20 @@ function errorResult(error: unknown): CallToolResult {
   };
 }
 
+function redactUserInfo(value: unknown): unknown {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return value;
+  const {
+    email: _email,
+    user_token: _userToken,
+    siwa_user_id: _siwaUserId,
+    stripe_customer_id: _stripeCustomerId,
+    login_type: _loginType,
+    uuid: _uuid,
+    ...safeProfile
+  } = value as Record<string, unknown>;
+  return safeProfile;
+}
+
 export class YazioMcpServer {
   readonly server: McpServer;
   readonly api: YazioApiClient;
@@ -92,11 +106,12 @@ export class YazioMcpServer {
         "After every mutation, read the affected date again and verify the result. If an unambiguous discrepancy was caused by the mutation, correct it using the captured original or intended values; otherwise report the discrepancy instead of guessing.",
         "When reporting results, resolve product and consumed-item IDs into names and relevant details whenever the API provides enough information.",
         "User-created recipe and product collections return opaque IDs. Resolve recipe IDs with get_recipe and product IDs with get_product before reporting names, nutrients, or serving details.",
-        "Prefer an existing YAZIO product: search the product database before using a quick-add simple product. Use a simple product only when no suitable match exists or the user explicitly requests an estimate.",
+        "Prefer an existing YAZIO product: search the product database before using a quick-add simple product. Use a simple product only when no suitable match exists or the user explicitly requests an estimate. Search countries and locales are ranking context, not strict result filters; inspect returned language and countries before choosing a product.",
+        "get_user_suggested_products returns YAZIO recommendations for a date and meal slot, not a text search or guaranteed recent-history list. Use search_products for a named food; its optional limit is applied by this MCP after the API response.",
         "Regular product diary writes require a full YYYY-MM-DD HH:mm:ss timestamp. When copying an entry, preserve its source time-of-day and change only the target calendar date; never use a date-only value for a write.",
         "For multiple regular products, use add_user_consumed_items with one complete item per product and verify every generated consumed-item ID after the write.",
         "A v22 diary deletion is bucket-specific: preserve whether each ID belongs to products, recipe_portions, or simple_products. Before deletion, read the affected diary date, retain a backup of every selected entry, confirm the complete target set, and then use remove_user_consumed_item or remove_user_consumed_items with the matching bucket.",
-        "For multiple water entries, calculate each cumulative water_intake value in chronological order and use add_user_water_intakes only after verifying those totals.",
+        "For multiple water entries, calculate each cumulative water_intake value in chronological order and use add_user_water_intakes only after verifying those totals. The API has no documented water-entry delete; retain the prior daily total because a correction can restore the state with a subsequent cumulative write, but cannot erase provider history.",
       ].join(" "),
     });
     this.registerTools();
@@ -113,10 +128,10 @@ export class YazioMcpServer {
 
   private registerTools(): void {
     this.server.registerTool("get_user", {
-      description: "Get YAZIO user profile information.",
+      description: "Get YAZIO user profile information. Authentication tokens, sign-in-provider identifiers, and the account email are omitted from the MCP response.",
       inputSchema: GetUserInfoInputSchema,
       annotations: { readOnlyHint: true, idempotentHint: true },
-    }, async () => this.run(async () => dataResult("User info", await this.api.getUser())) as Promise<CallToolResult>);
+    }, async () => this.run(async () => dataResult("User info", redactUserInfo(await this.api.getUser()))) as Promise<CallToolResult>);
 
     this.server.registerTool("get_user_consumed_items", {
       description: "Get all diary food entries, including quick-add simple products, for a date (YYYY-MM-DD).",
@@ -149,10 +164,13 @@ export class YazioMcpServer {
     }, async () => this.run(async () => dataResult("User settings", await this.api.getSettings())) as Promise<CallToolResult>);
 
     this.server.registerTool("get_user_suggested_products", {
-      description: "Get products YAZIO suggests for a meal slot and date.",
+      description: "Get YAZIO's recommendation/history-style products for a meal slot and date. This is not text search; an optional limit is applied locally after the API response.",
       inputSchema: GetUserSuggestedProductsInputSchema,
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: true },
-    }, async (args: GetUserSuggestedProductsInput) => this.run(async () => dataResult("Product suggestions", await this.api.getSuggestedProducts(args.date, args.daytime))) as Promise<CallToolResult>);
+    }, async (args: GetUserSuggestedProductsInput) => this.run(async () => {
+      const suggestions = await this.api.getSuggestedProducts(args.date, args.daytime);
+      return dataResult("Product suggestions", args.limit === undefined ? suggestions : suggestions.slice(0, args.limit));
+    }) as Promise<CallToolResult>);
 
     this.server.registerTool("get_user_water_intake", {
       description: "Get water intake for a date (the API returns a cumulative value).",
@@ -173,7 +191,7 @@ export class YazioMcpServer {
     }, async (args: GetDailySummaryInput) => this.run(async () => dataResult(`Daily summary for ${args.date}`, await this.api.getDailySummary(args.date))) as Promise<CallToolResult>);
 
     this.server.registerTool("search_products", {
-      description: "Search YAZIO's food database by name, with optional sex, country, and locale filters.",
+      description: "Search YAZIO's food database by name. Sex and country provide required ranking context; locale and Accept-Language influence ranking, but returned products may include other markets.",
       inputSchema: SearchProductsInputSchema,
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: true },
     }, async (args: SearchProductsInput) => this.run(async () => {
@@ -283,7 +301,7 @@ export class YazioMcpServer {
     }) as Promise<CallToolResult>);
 
     this.server.registerTool("add_user_water_intake", {
-      description: "Log a cumulative water-intake value. Read the current total first, add the new amount, then submit the new total.",
+      description: "Set the day's cumulative water-intake value. Read and retain the current total first; a correction can restore that total, but YAZIO documents no history-delete operation.",
       inputSchema: AddWaterIntakeInputSchema,
       annotations: { readOnlyHint: false, idempotentHint: false },
     }, async (args: AddWaterIntakeInput) => this.run(async () => {
@@ -309,7 +327,7 @@ export class YazioMcpServer {
       description: "Guide for adding a food item to the user's consumption log.",
     }, async () => ({ messages: [{ role: "user", content: { type: "text", text: [
       "To add a food item to the user's consumption log, follow this workflow:",
-      "1. Search first: call search_products with a query such as chicken breast, apple, or pasta. You may provide sex, countries, and locales when useful. Never invent a product_id.",
+      "1. Search first: call search_products with a query such as chicken breast, apple, or pasta. Provide the user's sex, countries, and locales when known; these influence ranking rather than strictly filtering results, so inspect returned language and country metadata. Never invent a product_id.",
       "2. Clarify the product: if multiple results match, ask the user which exact product they want before continuing.",
       "3. Inspect product details: call get_product with the selected product_id. Use its servings and base_unit to understand the available serving types (for example portion, gram, piece, or cup) and whether the product is measured in grams (g) or millilitres (ml).",
       "4. Clarify the quantity: if the user did not provide a serving type and quantity or a base-unit amount, ask which serving from the product details and how much they want to add. If the user gave a base-unit amount, use that directly.",
@@ -358,7 +376,7 @@ export class YazioMcpServer {
       "3. Confirm the timestamp uses YYYY-MM-DD HH:mm:ss and that the resulting cumulative value is non-negative.",
       "4. Confirm the log change with the user, then call add_user_water_intake with one object containing date and the new cumulative water_intake. For multiple entries, calculate each cumulative total in chronological order and call add_user_water_intakes with an entries array. The server sends the array required by the YAZIO API.",
       "Example: if the current total is 500 ml and the user adds 250 ml, submit { date: \"2025-12-18 12:00:00\", water_intake: 750 }.",
-      "5. Verify the write by calling get_user_water_intake for the same day and confirm the cumulative value. If it is wrong, immediately submit the intended cumulative value and verify again.",
+      "5. Verify the write by calling get_user_water_intake for the same day and confirm the cumulative value. If it is wrong, immediately submit the retained intended cumulative value and verify again; this restores the daily state but does not erase provider-side history.",
       "Never submit only the new amount, and do not skip the initial read because another entry may have changed the total. For multiple dates, read, update, and verify each date separately.",
     ].join("\n\n") } }] }));
   }

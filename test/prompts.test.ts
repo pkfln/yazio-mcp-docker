@@ -62,6 +62,7 @@ test("exposes the reference MCP prompts and quick-add guidance", async () => {
     expect(text(addWater)).toContain("cumulative water_intake");
     expect(text(addWater)).toContain("YYYY-MM-DD HH:mm:ss");
     expect(text(addWater)).toContain("add_user_water_intakes");
+    expect(text(addWater)).toContain("does not erase provider-side history");
   } finally {
     await client.close();
     await server.close();
