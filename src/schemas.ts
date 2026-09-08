@@ -105,8 +105,23 @@ export const AddConsumedItemInputSchema = z.object({
   serving_quantity: z.number().positive().nullable().optional(),
 });
 
+export const AddConsumedItemsInputSchema = z.object({
+  items: z
+    .array(AddConsumedItemInputSchema)
+    .min(1)
+    .describe("Regular YAZIO products to add to the diary in one request"),
+});
+
 export const RemoveConsumedItemInputSchema = z.object({
   itemId: ItemIdSchema.describe("ID of the consumed item to remove, not the product ID"),
+});
+
+export const RemoveConsumedItemsInputSchema = z.object({
+  itemIds: z
+    .array(ItemIdSchema)
+    .min(1)
+    .refine((ids) => new Set(ids).size === ids.length, "Consumed-item IDs must be unique")
+    .describe("Consumed-item IDs to remove after confirming each exact entry"),
 });
 
 export const AddWaterIntakeInputSchema = z.object({
@@ -115,6 +130,13 @@ export const AddWaterIntakeInputSchema = z.object({
     .number()
     .nonnegative()
     .describe("Cumulative water intake in millilitres"),
+});
+
+export const AddWaterIntakesInputSchema = z.object({
+  entries: z
+    .array(AddWaterIntakeInputSchema)
+    .min(1)
+    .describe("Cumulative water-intake entries to submit in one request"),
 });
 
 export const AddSimpleProductInputSchema = z.object({
@@ -149,8 +171,11 @@ export type GetUserExercisesInput = z.infer<typeof GetUserExercisesInputSchema>;
 export type GetUserSettingsInput = z.infer<typeof GetUserSettingsInputSchema>;
 export type GetUserSuggestedProductsInput = z.infer<typeof GetUserSuggestedProductsInputSchema>;
 export type AddConsumedItemInput = z.infer<typeof AddConsumedItemInputSchema>;
+export type AddConsumedItemsInput = z.infer<typeof AddConsumedItemsInputSchema>;
 export type RemoveConsumedItemInput = z.infer<typeof RemoveConsumedItemInputSchema>;
+export type RemoveConsumedItemsInput = z.infer<typeof RemoveConsumedItemsInputSchema>;
 export type AddWaterIntakeInput = z.infer<typeof AddWaterIntakeInputSchema>;
+export type AddWaterIntakesInput = z.infer<typeof AddWaterIntakesInputSchema>;
 export type AddSimpleProductInput = z.infer<typeof AddSimpleProductInputSchema>;
 export type GetDietaryPreferencesInput = z.infer<typeof GetDietaryPreferencesInputSchema>;
 export type GetUserGoalsInput = z.infer<typeof GetUserGoalsInputSchema>;

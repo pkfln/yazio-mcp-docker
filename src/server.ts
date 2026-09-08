@@ -3,8 +3,10 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 
 import {
   AddConsumedItemInputSchema,
+  AddConsumedItemsInputSchema,
   AddSimpleProductInputSchema,
   AddWaterIntakeInputSchema,
+  AddWaterIntakesInputSchema,
   GetDailySummaryInputSchema,
   GetDietaryPreferencesInputSchema,
   GetFoodEntriesInputSchema,
@@ -17,10 +19,13 @@ import {
   GetUserWeightInputSchema,
   GetWaterIntakeInputSchema,
   RemoveConsumedItemInputSchema,
+  RemoveConsumedItemsInputSchema,
   SearchProductsInputSchema,
   type AddConsumedItemInput,
+  type AddConsumedItemsInput,
   type AddSimpleProductInput,
   type AddWaterIntakeInput,
+  type AddWaterIntakesInput,
   type GetDailySummaryInput,
   type GetFoodEntriesInput,
   type GetProductInput,
@@ -30,6 +35,7 @@ import {
   type GetUserWeightInput,
   type GetWaterIntakeInput,
   type RemoveConsumedItemInput,
+  type RemoveConsumedItemsInput,
   type SearchProductsInput,
 } from "./schemas";
 import { YazioApiClient } from "./yazio-api";
@@ -77,6 +83,9 @@ export class YazioMcpServer {
         "When reporting results, resolve product and consumed-item IDs into names and relevant details whenever the API provides enough information.",
         "Prefer an existing YAZIO product: search the product database before using a quick-add simple product. Use a simple product only when no suitable match exists or the user explicitly requests an estimate.",
         "Regular product diary writes require a full YYYY-MM-DD HH:mm:ss timestamp. When copying an entry, preserve its source time-of-day and change only the target calendar date; never use a date-only value for a write.",
+        "For multiple regular products, use add_user_consumed_items with one complete item per product and verify every generated consumed-item ID after the write.",
+        "Before bulk deletion, read the affected diary date, retain a backup of every selected entry, confirm the complete target set, and then use remove_user_consumed_items.",
+        "For multiple water entries, calculate each cumulative water_intake value in chronological order and use add_user_water_intakes only after verifying those totals.",
       ].join(" "),
     });
     this.registerTools();
@@ -183,6 +192,25 @@ export class YazioMcpServer {
       return textResult("Successfully added consumed item.");
     }) as Promise<CallToolResult>);
 
+    this.server.registerTool("add_user_consumed_items", {
+      description: "Add multiple regular YAZIO food products to the diary in one request. Search products first and provide a full timestamp for every item.",
+      inputSchema: AddConsumedItemsInputSchema,
+      annotations: { readOnlyHint: false, idempotentHint: false },
+    }, async (args: AddConsumedItemsInput) => this.run(async () => {
+      const result = await this.api.addConsumedItems(args.items.map((item) => ({
+        product_id: item.product_id,
+        date: item.date,
+        daytime: item.daytime,
+        amount: item.amount,
+        serving: item.serving ?? null,
+        serving_quantity: item.serving_quantity ?? null,
+      })));
+      return dataResult(`Successfully added ${result.ids.length} consumed items`, {
+        consumed_item_ids: result.ids,
+        api_response: result.response,
+      });
+    }) as Promise<CallToolResult>);
+
     this.server.registerTool("add_user_simple_product", {
       description: "Quick-add a food entry with estimated nutrition values after product search finds no suitable match, or when the user explicitly requests an estimate.",
       inputSchema: AddSimpleProductInputSchema,
@@ -201,6 +229,18 @@ export class YazioMcpServer {
       return dataResult(`Successfully removed consumed item with ID: ${args.itemId}`, result);
     }) as Promise<CallToolResult>);
 
+    this.server.registerTool("remove_user_consumed_items", {
+      description: "Remove multiple regular or quick-add diary entries by their consumed-item IDs. Retrieve and confirm every target first.",
+      inputSchema: RemoveConsumedItemsInputSchema,
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
+    }, async (args: RemoveConsumedItemsInput) => this.run(async () => {
+      const response = await this.api.removeConsumedItems(args.itemIds);
+      return dataResult(`Successfully removed ${args.itemIds.length} consumed items`, {
+        consumed_item_ids: args.itemIds,
+        api_response: response,
+      });
+    }) as Promise<CallToolResult>);
+
     this.server.registerTool("add_user_water_intake", {
       description: "Log a cumulative water-intake value. Read the current total first, add the new amount, then submit the new total.",
       inputSchema: AddWaterIntakeInputSchema,
@@ -208,6 +248,17 @@ export class YazioMcpServer {
     }, async (args: AddWaterIntakeInput) => this.run(async () => {
       await this.api.addWaterIntake(args);
       return textResult("Successfully logged water intake entry.");
+    }) as Promise<CallToolResult>);
+
+    this.server.registerTool("add_user_water_intakes", {
+      description: "Log multiple cumulative water-intake values in one request. Read the current total first and provide cumulative values in chronological order.",
+      inputSchema: AddWaterIntakesInputSchema,
+      annotations: { readOnlyHint: false, idempotentHint: false },
+    }, async (args: AddWaterIntakesInput) => this.run(async () => {
+      await this.api.addWaterIntakes(args.entries);
+      return dataResult(`Successfully logged ${args.entries.length} water intake entries`, {
+        entries: args.entries,
+      });
     }) as Promise<CallToolResult>);
   }
 
@@ -222,7 +273,7 @@ export class YazioMcpServer {
       "3. Inspect product details: call get_product with the selected product_id. Use its servings and base_unit to understand the available serving types (for example portion, gram, piece, or cup) and whether the product is measured in grams (g) or millilitres (ml).",
       "4. Clarify the quantity: if the user did not provide a serving type and quantity or a base-unit amount, ask which serving from the product details and how much they want to add. If the user gave a base-unit amount, use that directly.",
       "5. Confirm the change with the user before writing to the diary. Adding an item is a mutating action.",
-      "6. Call add_user_consumed_item with product_id from search_products, date in YYYY-MM-DD HH:mm:ss format, daytime (breakfast, lunch, dinner, or snack), and a positive amount in the product's base unit. When copying an entry, preserve its source time-of-day and replace only the calendar date. When using a serving, provide serving and serving_quantity together; when using a base-unit amount directly, those serving fields may be omitted.",
+      "6. Call add_user_consumed_item with product_id from search_products, date in YYYY-MM-DD HH:mm:ss format, daytime (breakfast, lunch, dinner, or snack), and a positive amount in the product's base unit. For multiple regular products in one confirmed request, use add_user_consumed_items with one complete item per product. When copying an entry, preserve its source time-of-day and replace only the calendar date. When using a serving, provide serving and serving_quantity together; when using a base-unit amount directly, those serving fields may be omitted.",
       "Serving arithmetic: amount must be the base-unit amount, not the number of servings. For example, two apples at 100 g each means serving=piece, serving_quantity=2, amount=200; 200 g of chicken means amount=200 without a serving. A base unit such as g or ml can also be used as the serving when the product exposes it.",
       "7. Verify the write: call get_user_consumed_items for the target calendar date, resolve the new entry's product_id into its product name when needed, and confirm the full timestamp, meal slot, amount, and serving are correct. If the result is wrong, correct it immediately using the captured values.",
       "For multiple dates, complete and verify one date at a time. Do not guess product IDs, serving sizes, dates, or meal slots. Ask a follow-up question whenever the product, serving, or quantity is ambiguous.",
@@ -251,7 +302,7 @@ export class YazioMcpServer {
       "3. If multiple entries match, ask the user to clarify which one should be removed. Do not guess.",
       "4. Keep the original product_id, date, daytime, amount, serving, and serving_quantity in context so the entry can be recreated if verification finds a mistake.",
       "5. Tell the user which entry will be deleted and confirm the destructive change before continuing.",
-      "6. Call remove_user_consumed_item with itemId set to the selected consumed-item id.",
+      "6. Call remove_user_consumed_item with itemId set to the selected consumed-item id. If several exact entries are confirmed, use remove_user_consumed_items with all selected consumed-item IDs in one request.",
       "7. Verify the deletion by calling get_user_consumed_items for the same date and resolving the remaining entries into names. If the wrong item was removed, recreate the original entry immediately from the captured fields and verify again.",
     ].join("\n\n") } }] }));
 
@@ -263,7 +314,7 @@ export class YazioMcpServer {
       "1. Read the current total first: call get_user_water_intake for the relevant date in YYYY-MM-DD format. The response contains cumulative water_intake in millilitres.",
       "2. Add the user's new amount in millilitres to the current cumulative water_intake. Submit the total, not only the incremental amount.",
       "3. Confirm the timestamp uses YYYY-MM-DD HH:mm:ss and that the resulting cumulative value is non-negative.",
-      "4. Confirm the log change with the user, then call add_user_water_intake with one object containing date and the new cumulative water_intake. The server wraps that object in the array required by the YAZIO API.",
+      "4. Confirm the log change with the user, then call add_user_water_intake with one object containing date and the new cumulative water_intake. For multiple entries, calculate each cumulative total in chronological order and call add_user_water_intakes with an entries array. The server sends the array required by the YAZIO API.",
       "Example: if the current total is 500 ml and the user adds 250 ml, submit { date: \"2025-12-18 12:00:00\", water_intake: 750 }.",
       "5. Verify the write by calling get_user_water_intake for the same day and confirm the cumulative value. If it is wrong, immediately submit the intended cumulative value and verify again.",
       "Never submit only the new amount, and do not skip the initial read because another entry may have changed the total. For multiple dates, read, update, and verify each date separately.",

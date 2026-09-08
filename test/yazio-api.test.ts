@@ -1,6 +1,11 @@
 import { expect, test } from "bun:test";
 
-import { AddConsumedItemInputSchema } from "../src/schemas";
+import {
+  AddConsumedItemInputSchema,
+  AddConsumedItemsInputSchema,
+  AddWaterIntakesInputSchema,
+  RemoveConsumedItemsInputSchema,
+} from "../src/schemas";
 import { YazioApiClient } from "../src/yazio-api";
 
 function jsonResponse(value: unknown, status = 200): Response {
@@ -20,6 +25,24 @@ test("requires a timestamp for regular diary writes", () => {
 
   expect(AddConsumedItemInputSchema.safeParse(input).success).toBe(true);
   expect(AddConsumedItemInputSchema.safeParse({ ...input, date: "2026-01-02" }).success).toBe(false);
+});
+
+test("validates non-empty bulk diary mutation inputs", () => {
+  const item = {
+    product_id: "product-1",
+    date: "2026-01-02 09:00:00",
+    daytime: "breakfast" as const,
+    amount: 200,
+  };
+
+  expect(AddConsumedItemsInputSchema.safeParse({ items: [item] }).success).toBe(true);
+  expect(AddConsumedItemsInputSchema.safeParse({ items: [] }).success).toBe(false);
+  expect(RemoveConsumedItemsInputSchema.safeParse({ itemIds: ["item-1", "item-2"] }).success).toBe(true);
+  expect(RemoveConsumedItemsInputSchema.safeParse({ itemIds: ["item-1", "item-1"] }).success).toBe(false);
+  expect(AddWaterIntakesInputSchema.safeParse({
+    entries: [{ date: "2026-01-02 08:00:00", water_intake: 500 }],
+  }).success).toBe(true);
+  expect(AddWaterIntakesInputSchema.safeParse({ entries: [] }).success).toBe(false);
 });
 
 test("authenticates with the Swagger-required form body and reuses the token", async () => {
@@ -81,6 +104,68 @@ test("uses exact public API paths and payload shapes for mutations", async () =>
   expect(JSON.parse(String(remove?.init?.body))).toEqual(["item-1"]);
   const water = calls.find(({ init, url }) => url.endsWith("/user/water-intake") && initMethod(init) === "POST");
   expect(JSON.parse(String(water?.init?.body))).toEqual([{ date: "2026-01-02 12:00:00", water_intake: 750 }]);
+});
+
+test("uses the documented array payloads for bulk diary mutations", async () => {
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const url = String(input);
+    calls.push({ url, init });
+    if (url.endsWith("/oauth/token")) {
+      return jsonResponse({ access_token: "access-1", token_type: "bearer", expires_in: 3600 });
+    }
+    return jsonResponse({ ok: true });
+  };
+
+  const api = new YazioApiClient({ username: "user@example.com", password: "secret", fetch });
+  const added = await api.addConsumedItems([
+    {
+      product_id: "product-1",
+      date: "2026-01-02 08:30:00",
+      daytime: "breakfast",
+      amount: 100,
+      serving: "gram",
+      serving_quantity: 100,
+    },
+    {
+      product_id: "product-2",
+      date: "2026-01-02 19:30:00",
+      daytime: "dinner",
+      amount: 150,
+      serving: null,
+      serving_quantity: null,
+    },
+  ]);
+  await api.removeConsumedItems(["item-1", "item-2"]);
+  await api.addWaterIntakes([
+    { date: "2026-01-02 08:00:00", water_intake: 500 },
+    { date: "2026-01-02 12:00:00", water_intake: 750 },
+  ]);
+
+  const add = calls.find(({ url, init }) => url.endsWith("/user/consumed-items") && initMethod(init) === "POST");
+  expect(add).toBeDefined();
+  const addBody = JSON.parse(String(add?.init?.body)) as {
+    products: Array<Record<string, unknown>>;
+    recipe_portions: unknown[];
+    simple_products: unknown[];
+  };
+  expect(addBody.recipe_portions).toEqual([]);
+  expect(addBody.simple_products).toEqual([]);
+  expect(addBody.products).toHaveLength(2);
+  expect(added.ids).toHaveLength(2);
+  expect(addBody.products.map((product) => product.id)).toEqual(added.ids);
+  expect(addBody.products.map((product) => product.date)).toEqual([
+    "2026-01-02 08:30:00",
+    "2026-01-02 19:30:00",
+  ]);
+
+  const remove = calls.find(({ url, init }) => url.endsWith("/user/consumed-items") && initMethod(init) === "DELETE");
+  expect(JSON.parse(String(remove?.init?.body))).toEqual(["item-1", "item-2"]);
+  const water = calls.find(({ url, init }) => url.endsWith("/user/water-intake") && initMethod(init) === "POST");
+  expect(JSON.parse(String(water?.init?.body))).toEqual([
+    { date: "2026-01-02 08:00:00", water_intake: 500 },
+    { date: "2026-01-02 12:00:00", water_intake: 750 },
+  ]);
 });
 
 test("adds a quick-add simple product with estimated nutrients", async () => {

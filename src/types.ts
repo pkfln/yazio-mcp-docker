@@ -210,10 +210,14 @@ export interface AddConsumedItemRequest {
   serving_quantity: number | null;
 }
 
+export type AddConsumedItemsRequest = AddConsumedItemRequest[];
+
 export interface AddWaterIntakeRequest {
   date: string;
   water_intake: number;
 }
+
+export type AddWaterIntakesRequest = AddWaterIntakeRequest[];
 
 export interface AddSimpleProductRequest {
   name: string;

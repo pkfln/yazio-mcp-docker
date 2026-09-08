@@ -2,8 +2,10 @@ import { randomUUID } from "node:crypto";
 
 import type {
   AddConsumedItemRequest,
+  AddConsumedItemsRequest,
   AddSimpleProductRequest,
   AddWaterIntakeRequest,
+  AddWaterIntakesRequest,
   YazioConsumedItems,
   YazioDailySummary,
   YazioDietaryPreferences,
@@ -346,20 +348,27 @@ export class YazioApiClient {
     return this.request<YazioConsumedItems>(`/user/consumed-items?date=${encodeURIComponent(formatYazioDate(date))}`);
   }
 
-  async addConsumedItem(input: AddConsumedItemRequest): Promise<unknown> {
-    return this.requestJson("/user/consumed-items", "POST", {
+  async addConsumedItems(inputs: AddConsumedItemsRequest): Promise<{ ids: string[]; response: unknown }> {
+    const products = inputs.map((input) => ({
+      id: randomUUID(),
+      product_id: input.product_id,
+      date: formatYazioDateTime(input.date),
+      daytime: input.daytime,
+      amount: input.amount,
+      serving: input.serving,
+      serving_quantity: input.serving_quantity,
+    }));
+    const response = await this.requestJson("/user/consumed-items", "POST", {
       recipe_portions: [],
       simple_products: [],
-      products: [{
-        id: randomUUID(),
-        product_id: input.product_id,
-        date: formatYazioDateTime(input.date),
-        daytime: input.daytime,
-        amount: input.amount,
-        serving: input.serving,
-        serving_quantity: input.serving_quantity,
-      }],
+      products,
     });
+    return { ids: products.map(({ id }) => id), response };
+  }
+
+  async addConsumedItem(input: AddConsumedItemRequest): Promise<unknown> {
+    const result = await this.addConsumedItems([input]);
+    return result.response;
   }
 
   async addSimpleProduct(input: AddSimpleProductRequest): Promise<string> {
@@ -384,8 +393,12 @@ export class YazioApiClient {
     return id;
   }
 
+  async removeConsumedItems(itemIds: string[]): Promise<unknown> {
+    return this.requestJson("/user/consumed-items", "DELETE", itemIds);
+  }
+
   async removeConsumedItem(itemId: string): Promise<unknown> {
-    return this.requestJson("/user/consumed-items", "DELETE", [itemId]);
+    return this.removeConsumedItems([itemId]);
   }
 
   async getDailySummary(date: string): Promise<YazioDailySummary> {
@@ -396,8 +409,12 @@ export class YazioApiClient {
     return this.request<YazioWaterIntake>(`/user/water-intake?date=${encodeURIComponent(formatYazioDate(date))}`);
   }
 
+  async addWaterIntakes(inputs: AddWaterIntakesRequest): Promise<unknown> {
+    return this.requestJson("/user/water-intake", "POST", inputs);
+  }
+
   async addWaterIntake(input: AddWaterIntakeRequest): Promise<unknown> {
-    return this.requestJson("/user/water-intake", "POST", [input]);
+    return this.addWaterIntakes([input]);
   }
 
   async searchProducts(options: {

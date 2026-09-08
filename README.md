@@ -137,8 +137,11 @@ The image builds the server with Bun and configures `tunnel-client` to launch th
 | `search_products` | Search the YAZIO food database |
 | `get_product` | Full product and serving details |
 | `add_user_consumed_item` | Add a product to the diary |
+| `add_user_consumed_items` | Add multiple products to the diary in one request |
 | `add_user_simple_product` | Quick-add estimated nutrition when no suitable product exists |
 | `remove_user_consumed_item` | Delete a diary entry by consumed-item ID |
+| `remove_user_consumed_items` | Delete multiple diary entries by consumed-item ID |
 | `add_user_water_intake` | Submit a new cumulative water total |
+| `add_user_water_intakes` | Submit multiple cumulative water totals in one request |
 
 The prompts `add_food_item`, `quick_add_food`, `remove_food_item`, and `add_water_intake` guide clients through the safe multi-step flows.
